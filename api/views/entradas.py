@@ -1,0 +1,39 @@
+from rest_framework import status, viewsets
+from rest_framework.decorators import action
+from rest_framework.response import Response
+
+from api.permissions import Funcao, PerfilPermission
+from api.serializers.entradas import EntradaCreateSerializer, EntradaSerializer
+from entradas.domain.services import EntradaService
+from entradas.models import Entrada
+
+
+class EntradaViewSet(viewsets.ModelViewSet):
+    queryset = Entrada.objects.all()
+    permission_classes = [PerfilPermission]
+    funcoes_permitidas = {Funcao.ALMOXARIFADO}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._service = EntradaService()
+
+    def get_serializer_class(self):
+        if self.action == 'create':
+            return EntradaCreateSerializer
+        return EntradaSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        entrada = serializer.save()
+        return Response(EntradaSerializer(entrada).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def confirmar(self, request, pk=None):
+        entrada = self.get_object()
+        try:
+            self._service.confirmar(entrada, usuario=request.user)
+        except ValueError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response(EntradaSerializer(entrada).data)
