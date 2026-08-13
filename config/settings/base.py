@@ -4,6 +4,8 @@ Settings base — configurações comuns a todos os ambientes.
 from pathlib import Path
 
 import environ
+from datetime import timedelta
+
 
 # 3 níveis: base.py -> settings/ -> config/ -> raiz do projeto
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -105,4 +107,9 @@ REST_FRAMEWORK = {
     ),
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
     'PAGE_SIZE': 50,
+}
+
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 }
