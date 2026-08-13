@@ -38,9 +38,9 @@ class EntradaSerializer(serializers.ModelSerializer):
         model = Entrada
         fields = [
             'id', 'fornecedor', 'fornecedor_nome', 'responsavel', 'responsavel_nome',
-            'nota_fiscal', 'data_entrada', 'itens',
+            'nota_fiscal', 'data_entrada', 'confirmada_em', 'itens',
         ]
-
+        read_only_fields = ['confirmada_em']
 
 class EntradaCreateSerializer(serializers.ModelSerializer):
     """'responsavel' vem do usuário autenticado, não é campo de entrada."""

@@ -84,6 +84,7 @@ class MovimentacaoService:
         """
         # todo: validar se pode ser o último registro de movimentação ou se precisa ser o último registro de movimentação do tipo ENTRADA 
         # (para não considerar devoluções, por exemplo)
+        # e se devolver tem que fazer a movimentação de entrada ou se é só uma movimentação de saída (ou seja, se o saldo do material é afetado ou não)?
         ultima = (
             Movimentacao.objects
             .filter(material=material)
@@ -155,6 +156,8 @@ class MovimentacaoService:
         simplificação temporária. Quando a decisão vier, este é o ÚNICO
         método que precisa ser reescrito.
         """
+        # todo: validar se pode ser o último registro de entrada ou se precisa ser o último registro de entrada do material 
+        # (para não considerar devoluções, por exemplo)
         from entradas.models import ItemEntrada
 
         ultimo_item_entrada = (

@@ -13,9 +13,14 @@ class PerfilSerializer(serializers.ModelSerializer):
 
 
 class PostoSerializer(serializers.ModelSerializer):
+    responsavel_nome = serializers.SerializerMethodField()
+
     class Meta:
         model = Posto
-        fields = ['id', 'codigo', 'nome', 'descricao', 'responsavel']
+        fields = ['id', 'codigo', 'nome', 'descricao', 'responsavel', 'responsavel_nome']
+
+    def get_responsavel_nome(self, obj):
+        return str(obj.responsavel) if obj.responsavel else None
 
 
 class UsuarioSerializer(serializers.ModelSerializer):

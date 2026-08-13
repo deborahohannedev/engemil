@@ -6,6 +6,7 @@ from api.permissions import Funcao, PerfilPermission
 from api.serializers.entradas import EntradaCreateSerializer, EntradaSerializer
 from entradas.domain.services import EntradaService
 from entradas.models import Entrada
+from entradas.domain.services import EntradaJaConfirmadaError, EntradaService
 
 
 class EntradaViewSet(viewsets.ModelViewSet):
@@ -33,6 +34,8 @@ class EntradaViewSet(viewsets.ModelViewSet):
         entrada = self.get_object()
         try:
             self._service.confirmar(entrada, usuario=request.user)
+        except EntradaJaConfirmadaError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
         except ValueError as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 

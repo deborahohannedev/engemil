@@ -31,9 +31,10 @@ class ParticipanteInventarioSerializer(serializers.ModelSerializer):
 class InventarioSerializer(serializers.ModelSerializer):
     itens = ItemInventarioSerializer(many=True, read_only=True)
     participantes = ParticipanteInventarioSerializer(many=True, read_only=True)
-    encerrado_por_nome = serializers.CharField(
-        source='encerrado_por.__str__', read_only=True, default=None,
-    )
+    encerrado_por_nome = serializers.SerializerMethodField()
+
+    def get_encerrado_por_nome(self, obj):
+        return str(obj.encerrado_por) if obj.encerrado_por else None
 
     class Meta:
         model = Inventario

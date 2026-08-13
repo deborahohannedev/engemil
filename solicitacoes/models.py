@@ -6,6 +6,7 @@ from django.db import models
 class Solicitacao(models.Model):
 
     class Status(models.TextChoices):
+        # todo: verificar se os status estão corretos, pois o front está usando outros nomes
         ABERTA = 'ABERTA', 'Aberta'
         EM_ANDAMENTO = 'EM_ANDAMENTO', 'Em andamento'
         PARCIALMENTE_ATENDIDA = 'PARCIALMENTE_ATENDIDA', 'Parcialmente atendida'
@@ -52,6 +53,7 @@ class Solicitacao(models.Model):
 class ItemSolicitacao(models.Model):
 
     class Status(models.TextChoices):
+        # todo: verificar se os status estão corretos, pois o front está usando outros nomes
         PENDENTE = 'PENDENTE', 'Pendente'
         DISPONIVEL = 'DISPONIVEL', 'Disponível'
         INDISPONIVEL = 'INDISPONIVEL', 'Indisponível'

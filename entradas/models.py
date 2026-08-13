@@ -15,6 +15,8 @@ class Entrada(models.Model):
     nota_fiscal = models.CharField(max_length=50, null=True, blank=True)
     data_entrada = models.DateTimeField()
 
+    confirmada_em = models.DateTimeField(null=True, blank=True)
+
     class Meta:
         db_table = 'entrada'
         ordering = ['-data_entrada']
@@ -22,6 +24,9 @@ class Entrada(models.Model):
     def __str__(self):
         referencia = self.nota_fiscal or str(self.id)[:8]
         return f'Entrada {referencia}'
+
+    def esta_confirmada(self) -> bool:
+        return self.confirmada_em is not None
 
 
 class ItemEntrada(models.Model):
