@@ -2,21 +2,31 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from api.permissions import ApenasProprioPosto, Funcao, PerfilPermission
+from api.permissions import ApenasProprioSolicitante, Funcao, PerfilPermission
 from api.serializers.solicitacoes import SolicitacaoCreateSerializer, SolicitacaoSerializer
 from core.domain.services import SaldoInsuficienteError
-from solicitacoes.domain.services import DisponibilidadeInsuficienteError, SolicitacaoService
+from solicitacoes.domain.services import (
+    DisponibilidadeInsuficienteError, SolicitacaoNaoPodeSerReabertaError, SolicitacaoService,
+)
 from solicitacoes.models import Solicitacao
 
 
 class SolicitacaoViewSet(viewsets.ModelViewSet):
     queryset = Solicitacao.objects.all()
-    permission_classes = [PerfilPermission, ApenasProprioPosto]
-    funcoes_permitidas = {Funcao.ENCARREGADO, Funcao.ALMOXARIFADO, Funcao.CONSULTA}
+    permission_classes = [PerfilPermission, ApenasProprioSolicitante]
+    funcoes_permitidas = {Funcao.ENCARREGADO, Funcao.ALMOXARIFADO}
+    filterset_fields = ['status', 'posto', 'demanda']
+    search_fields = ['numero']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._service = SolicitacaoService()
+
+    def get_queryset(self):
+        queryset = Solicitacao.objects.all()
+        if self.request.user.perfil.funcao == Funcao.ENCARREGADO:
+            return queryset.filter(solicitante=self.request.user)
+        return queryset
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -58,5 +68,22 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
     def cancelar(self, request, pk=None):
         solicitacao = self.get_object()
         self._service.cancelar(solicitacao)
+        solicitacao.refresh_from_db()
+        return Response(SolicitacaoSerializer(solicitacao).data)
+
+    @action(detail=True, methods=['post'])
+    def reabrir(self, request, pk=None):
+        if request.user.perfil.funcao not in ({Funcao.ALMOXARIFADO} | Funcao.SEMPRE_PERMITIDOS):
+            return Response(
+                {'detail': 'Apenas o Almoxarifado pode reabrir uma solicitação.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        solicitacao = self.get_object()
+        try:
+            self._service.reabrir(solicitacao)
+        except SolicitacaoNaoPodeSerReabertaError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+
         solicitacao.refresh_from_db()
         return Response(SolicitacaoSerializer(solicitacao).data)

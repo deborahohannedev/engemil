@@ -1,25 +1,47 @@
+import django_filters
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
-from api.permissions import Funcao, PerfilPermission
+from api.permissions import ApenasDevolucaoDoProprioSolicitante, Funcao, PerfilPermission
 from api.serializers.devolucoes import DevolucaoCreateSerializer, DevolucaoSerializer
 from devolucoes.domain.services import (
     DevolucaoJaDecididaError, DevolucaoService,
-    MaterialDanificadoNaoRetornaAoEstoqueError,
+    MaterialDanificadoNaoRetornaAoEstoqueError, SaldoDevolucaoInsuficienteError,
 )
 from devolucoes.models import Devolucao
 
 
+class DevolucaoFilter(django_filters.FilterSet):
+    # data_final é datetime (nullable) — "pendente" vira BooleanFilter
+    # derivado via isnull, já que esta_pendente() não é um campo de banco.
+    pendente = django_filters.BooleanFilter(method='filter_pendente')
+
+    class Meta:
+        model = Devolucao
+        fields = ['condicao']
+
+    def filter_pendente(self, queryset, name, value):
+        return queryset.filter(data_final__isnull=value)
+
+
 class DevolucaoViewSet(viewsets.ModelViewSet):
     queryset = Devolucao.objects.all()
-    permission_classes = [PerfilPermission]
+    permission_classes = [PerfilPermission, ApenasDevolucaoDoProprioSolicitante]
     funcoes_permitidas = {Funcao.ENCARREGADO, Funcao.ALMOXARIFADO}
+    filterset_class = DevolucaoFilter
+    search_fields = ['item_solicitacao__material__codigo', 'item_solicitacao__material__descricao']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self._service = DevolucaoService()
+
+    def get_queryset(self):
+        queryset = Devolucao.objects.all()
+        if self.request.user.perfil.funcao == Funcao.ENCARREGADO:
+            return queryset.filter(item_solicitacao__solicitacao__solicitante=self.request.user)
+        return queryset
 
     def get_serializer_class(self):
         if self.action == 'create':
@@ -60,7 +82,11 @@ class DevolucaoViewSet(viewsets.ModelViewSet):
         devolucao = self.get_object()
         try:
             self._service.aprovar(devolucao, usuario=request.user)
-        except (DevolucaoJaDecididaError, MaterialDanificadoNaoRetornaAoEstoqueError) as exc:
+        except (
+            DevolucaoJaDecididaError,
+            MaterialDanificadoNaoRetornaAoEstoqueError,
+            SaldoDevolucaoInsuficienteError,
+        ) as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
 
         devolucao.refresh_from_db()

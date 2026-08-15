@@ -1,18 +1,32 @@
+from decimal import Decimal
+
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from core.validators import validar_quantidade_por_unidade
 from solicitacoes.models import ItemSolicitacao, Solicitacao
 
 
 class ItemSolicitacaoSerializer(serializers.ModelSerializer):
     material_codigo = serializers.CharField(source='material.codigo', read_only=True)
+    material_descricao = serializers.CharField(source='material.descricao', read_only=True)
+    unidade_sigla = serializers.CharField(source='material.unidade.sigla', read_only=True)
+    # valor unitário sempre lido do cadastro do Material — não é um snapshot
+    # gravado no item, então reflete o preço cadastral atual do material.
+    material_valor_unitario = serializers.DecimalField(
+        source='material.valor_unitario', max_digits=14, decimal_places=2, read_only=True,
+    )
+    valor_total = serializers.SerializerMethodField()
     saldo_pendente = serializers.SerializerMethodField()
+    tem_devolucao_pendente = serializers.SerializerMethodField()
 
     class Meta:
         model = ItemSolicitacao
         fields = [
-            'id', 'solicitacao', 'material', 'material_codigo',
+            'id', 'solicitacao', 'material', 'material_codigo', 'material_descricao', 'unidade_sigla',
+            'material_valor_unitario', 'valor_total',
             'quantidade_solicitada', 'quantidade_atendida', 'quantidade_devolvida',
-            'status', 'saldo_pendente',
+            'status', 'saldo_pendente', 'observacao', 'tem_devolucao_pendente',
         ]
         # campos derivados — nunca aceitos como input, só refletem o que
         # os services já gravaram
@@ -21,11 +35,23 @@ class ItemSolicitacaoSerializer(serializers.ModelSerializer):
     def get_saldo_pendente(self, obj):
         return obj.saldo_pendente()
 
+    def get_valor_total(self, obj):
+        if obj.material.valor_unitario is None:
+            return None
+        return obj.quantidade_solicitada * obj.material.valor_unitario
+
+    def get_tem_devolucao_pendente(self, obj):
+        return obj.devolucoes.filter(data_final__isnull=True).exists()
+
 
 class ItemSolicitacaoCreateSerializer(serializers.ModelSerializer):
+    # obrigatória só na criação — o campo no model continua null=True pra
+    # não travar registros antigos/outros caminhos de escrita.
+    observacao = serializers.CharField(required=True, allow_blank=False)
+
     class Meta:
         model = ItemSolicitacao
-        fields = ['material', 'quantidade_solicitada']
+        fields = ['material', 'quantidade_solicitada', 'observacao']
 
     def validate_quantidade_solicitada(self, quantidade):
         if quantidade <= 0:
@@ -37,15 +63,26 @@ class SolicitacaoSerializer(serializers.ModelSerializer):
     itens = ItemSolicitacaoSerializer(many=True, read_only=True)
     solicitante_nome = serializers.CharField(source='solicitante.__str__', read_only=True)
     posto_nome = serializers.CharField(source='posto.nome', read_only=True)
+    valor_total = serializers.SerializerMethodField()
 
     class Meta:
         model = Solicitacao
         fields = [
             'id', 'numero', 'status', 'data_solicitacao', 'data_prevista',
             'demanda', 'posto', 'posto_nome', 'solicitante', 'solicitante_nome',
-            'observacao', 'itens',
+            'observacao', 'itens', 'valor_total', 'reaberta_em',
         ]
-        read_only_fields = ['status']  # status muda só via services
+        read_only_fields = ['status', 'reaberta_em']  # mudam só via services
+
+    def get_valor_total(self, obj):
+        # soma só os itens cujo material tem valor_unitario cadastrado —
+        # itens sem preço não entram na soma (não tem como estimar).
+        total = sum(
+            (item.quantidade_solicitada * item.material.valor_unitario
+             for item in obj.itens.all() if item.material.valor_unitario is not None),
+            Decimal('0'),
+        )
+        return total
 
 
 class SolicitacaoCreateSerializer(serializers.ModelSerializer):
@@ -53,7 +90,7 @@ class SolicitacaoCreateSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Solicitacao
-        fields = ['numero', 'data_prevista', 'demanda', 'posto', 'observacao', 'itens']
+        fields = ['numero', 'demanda', 'posto', 'observacao', 'itens']
 
     def validate_itens(self, itens):
         if not itens:
@@ -71,29 +108,27 @@ class SolicitacaoCreateSerializer(serializers.ModelSerializer):
                 )
             materiais_vistos.add(material.id)
 
+            try:
+                validar_quantidade_por_unidade(item['quantidade_solicitada'], material.unidade)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(exc.messages)
+
         return itens
-
-    def validate_data_prevista(self, data_prevista):
-        from django.utils import timezone
-
-        # ck_solicitacao_datas: data_prevista >= data_solicitacao.
-        # data_solicitacao é sempre "agora" (definida em create() abaixo),
-        # então comparamos contra o momento atual.
-        if data_prevista < timezone.now():
-            raise serializers.ValidationError(
-                'Data prevista não pode ser anterior ao momento da solicitação.'
-            )
-        return data_prevista
 
     def create(self, validated_data):
         from django.utils import timezone
 
         itens_data = validated_data.pop('itens')
         solicitante = self.context['request'].user
+        agora = timezone.now()
 
+        # data_prevista não é mais input do usuário — nasce igual à
+        # data_solicitacao (RN antiga de "data prevista futura" foi
+        # descartada a pedido do cliente).
         solicitacao = Solicitacao.objects.create(
             solicitante=solicitante,
-            data_solicitacao=timezone.now(),
+            data_solicitacao=agora,
+            data_prevista=agora,
             **validated_data,
         )
         for item_data in itens_data:

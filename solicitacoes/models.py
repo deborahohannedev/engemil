@@ -17,7 +17,7 @@ class Solicitacao(models.Model):
     numero = models.CharField(max_length=30, unique=True)
     status = models.CharField(max_length=25, choices=Status.choices, default=Status.ABERTA)
     data_solicitacao = models.DateTimeField()
-    data_prevista = models.DateTimeField()
+    data_prevista = models.DateTimeField(null=True, blank=True)
 
     demanda = models.ForeignKey(
         'core.Demanda', on_delete=models.PROTECT, related_name='solicitacoes',
@@ -29,6 +29,9 @@ class Solicitacao(models.Model):
         'core.Usuario', on_delete=models.PROTECT, related_name='solicitacoes_criadas',
     )
     observacao = models.TextField(null=True, blank=True)
+    # preenchido só pelo SolicitacaoService.reabrir() — rastro de que a
+    # solicitação foi reaberta ao menos uma vez depois de ATENDIDA.
+    reaberta_em = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'solicitacao'
@@ -71,6 +74,7 @@ class ItemSolicitacao(models.Model):
     quantidade_atendida = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     quantidade_devolvida = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDENTE)
+    observacao = models.TextField(null=True, blank=True)
 
     class Meta:
         db_table = 'item_solicitacao'

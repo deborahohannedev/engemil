@@ -4,16 +4,24 @@ Domain Service do bounded context devolucoes.
 DevolucaoService.aprovar() e .rejeitar() são os ÚNICOS pontos do sistema
 autorizados a preencher 'decisao' e 'data_final' em Devolucao.
 
-⚠️ PENDÊNCIAS DE NEGÓCIO (levar para o cliente):
+⚠️ PENDÊNCIA DE NEGÓCIO (levar para o cliente):
 1. rejeitar() nunca gera Movimentacao — material rejeitado nunca volta
    ao estoque, independente do motivo. RN-010 confirma que material
    danificado nunca deve voltar; aprovar() bloqueia esse caso
    explicitamente. Resta confirmar se rejeição por outro motivo (não
    avaria) deveria permitir retorno ao estoque depois.
-2. informar() NÃO valida se a quantidade devolvida é maior do que a
-   quantidade disponível para devolução. Isso só é barrado tarde, no
-   aprovar(), via CheckConstraint do banco — funcional, mas com erro
-   pouco amigável.
+
+Regras já garantidas em DevolucaoCreateSerializer.validate() (espelhadas
+aqui em informar() como defesa em profundidade, já que a view hoje cria
+Devolucao direto pelo serializer, sem passar por este service):
+- só uma devolução em aberto por item por vez (DevolucaoJaAbertaError)
+- quantidade não pode passar do disponível (quantidade_atendida -
+  quantidade_devolvida), sempre recalculado na hora do submit
+
+aprovar() repete essa mesma checagem de saldo (SaldoDevolucaoInsuficienteError)
+— bug real corrigido: sem isso, uma devolução pendente criada antes de outra
+já ter sido aprovada (esvaziando o saldo) estourava IntegrityError seco
+(ck_item_solicitacao_devolvida_lte_atendida) ao tentar aprovar, virando 500.
 """
 from decimal import Decimal
 
@@ -39,6 +47,21 @@ class DevolucaoJaDecididaError(Exception):
     pass
 
 
+class DevolucaoJaAbertaError(Exception):
+    """
+    Levantada ao tentar informar uma devolução pra um item que já tem
+    outra devolução pendente (data_final IS NULL). Só pode existir uma
+    devolução em aberto por item — a próxima só pode ser aberta depois
+    que a anterior for aprovada ou rejeitada.
+    """
+    pass
+
+
+class SaldoDevolucaoInsuficienteError(Exception):
+    """Levantada ao tentar devolver mais do que quantidade_atendida - quantidade_devolvida."""
+    pass
+
+
 class DevolucaoService:
 
     def __init__(self):
@@ -52,6 +75,18 @@ class DevolucaoService:
         condicao: bool,
         observacao: str = '',
     ) -> Devolucao:
+        if item_solicitacao.devolucoes.filter(data_final__isnull=True).exists():
+            raise DevolucaoJaAbertaError(
+                f'Item {item_solicitacao.material.codigo} já tem uma devolução pendente. '
+                f'Aguarde ela ser aprovada ou rejeitada antes de abrir outra.'
+            )
+
+        disponivel = item_solicitacao.quantidade_atendida - item_solicitacao.quantidade_devolvida
+        if quantidade > disponivel:
+            raise SaldoDevolucaoInsuficienteError(
+                f'Quantidade devolvida ({quantidade}) não pode passar do disponível ({disponivel}).'
+            )
+
         return Devolucao.objects.create(
             item_solicitacao=item_solicitacao,
             responsavel_conferencia=responsavel_conferencia,
@@ -81,6 +116,15 @@ class DevolucaoService:
                 f'aprovada para retorno ao estoque (RN-010). Use rejeitar() para este caso.'
             )
 
+        item = devolucao.item_solicitacao
+        disponivel = item.quantidade_atendida - item.quantidade_devolvida
+        if devolucao.quantidade > disponivel:
+            raise SaldoDevolucaoInsuficienteError(
+                f'Devolução {devolucao.id}: quantidade ({devolucao.quantidade}) não cabe mais no '
+                f'disponível do item ({disponivel}) — aprovar violaria a constraint do banco. '
+                f'Rejeite esta devolução.'
+            )
+
         with transaction.atomic():
             devolucao.decisao = True
             devolucao.data_final = timezone.now()
@@ -88,7 +132,6 @@ class DevolucaoService:
 
             self._movimentacao_service.registrar_devolucao(devolucao, usuario)
 
-            item = devolucao.item_solicitacao
             item.quantidade_devolvida += devolucao.quantidade
             item.save(update_fields=['quantidade_devolvida'])
 
