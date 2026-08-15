@@ -22,12 +22,14 @@ PERFIS_PADRAO = [
 # Trocar as senhas antes de rodar em qualquer ambiente real/exposto.
 USUARIOS_ADMIN = [
     {
+        'cpf': '12345678909',
         'email': 'admin1@engemil.com.br',
         'nome': 'Admin',
         'sobrenome': 'Um',
         'password': 'TrocarEssaSenha123!',
     },
     {
+        'cpf': '98765432100',
         'email': 'admin2@engemil.com.br',
         'nome': 'Admin',
         'sobrenome': 'Dois',
@@ -58,6 +60,7 @@ class Command(BaseCommand):
                 continue
 
             Usuario.objects.create_superuser(
+                cpf=dados['cpf'],
                 email=dados['email'],
                 nome=dados['nome'],
                 sobrenome=dados['sobrenome'],

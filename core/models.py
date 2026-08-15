@@ -1,8 +1,13 @@
 import uuid
+import secrets
+import string
+from decimal import Decimal
 
 from django.contrib.auth.base_user import AbstractBaseUser, BaseUserManager
 from django.contrib.auth.models import PermissionsMixin
 from django.db import models
+
+from core.validators import validar_cpf, validar_telefone
 
 
 class Perfil(models.Model):
@@ -45,24 +50,34 @@ class Posto(models.Model):
     def __str__(self):
         return f'{self.codigo} — {self.nome}'
 
+
+def gerar_senha_temporaria(tamanho: int = 12) -> str:
+    """
+    Gera uma senha aleatória segura, usada como senha inicial de novos
+    usuários — a pessoa é obrigada a trocar no primeiro acesso.
+    """
+    alfabeto = string.ascii_letters + string.digits + '!@#$%&*'
+    return ''.join(secrets.choice(alfabeto) for _ in range(tamanho))
+
 class UsuarioManager(BaseUserManager):
     """
-    Manager customizado — obrigatório ao usar AbstractBaseUser, já que
-    o Django não sabe mais criar usuários usando 'username' (não temos
-    esse campo; login é por e-mail).
+    Manager customizado — login por CPF, não por e-mail.
     """
-    # todo: verificar se login pode ser por email mesmo ou precisa ser username
-    def create_user(self, email, nome, sobrenome, password=None, **extra_fields):
+
+    def create_user(self, cpf, nome, sobrenome, email, password=None, **extra_fields):
+        if not cpf:
+            raise ValueError('O CPF é obrigatório para criar um usuário.')
         if not email:
             raise ValueError('O e-mail é obrigatório para criar um usuário.')
+
         email = self.normalize_email(email)
         extra_fields.setdefault('situacao', Usuario.Situacao.ATIVO)
-        usuario = self.model(email=email, nome=nome, sobrenome=sobrenome, **extra_fields)
+        usuario = self.model(cpf=cpf, nome=nome, sobrenome=sobrenome, email=email, **extra_fields)
         usuario.set_password(password)
         usuario.save(using=self._db)
         return usuario
 
-    def create_superuser(self, email, nome, sobrenome, password=None, **extra_fields):
+    def create_superuser(self, cpf, nome, sobrenome, email, password=None, **extra_fields):
         extra_fields.setdefault('is_staff', True)
         extra_fields.setdefault('is_superuser', True)
         extra_fields.setdefault('situacao', Usuario.Situacao.ATIVO)
@@ -72,7 +87,7 @@ class UsuarioManager(BaseUserManager):
         if extra_fields.get('is_superuser') is not True:
             raise ValueError('Superusuário precisa ter is_superuser=True.')
 
-        return self.create_user(email, nome, sobrenome, password, **extra_fields)
+        return self.create_user(cpf, nome, sobrenome, email, password, **extra_fields)
 
 
 class Usuario(AbstractBaseUser, PermissionsMixin):
@@ -95,9 +110,14 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
     nome = models.CharField(max_length=100)
     sobrenome = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
-    telefone = models.CharField(max_length=20, null=True, blank=True)
+    telefone = models.CharField(max_length=20, null=True, blank=True, validators=[validar_telefone])
     ramal = models.CharField(max_length=10, null=True, blank=True)
     situacao = models.CharField(max_length=20, choices=Situacao.choices, default=Situacao.ATIVO)
+    senha_temporaria = models.BooleanField(
+        default=True,
+        help_text='True enquanto o usuário não trocou a senha inicial gerada pelo sistema.',
+    )
+    cpf = models.CharField(max_length=14, unique=True, validators=[validar_cpf])
 
     # todo: verificar se os status estão corretos, pois o front está usando outros nomes
     perfil = models.ForeignKey(
@@ -117,8 +137,8 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
 
     objects = UsuarioManager()
 
-    USERNAME_FIELD = 'email'
-    REQUIRED_FIELDS = ['nome', 'sobrenome']
+    USERNAME_FIELD = 'cpf'
+    REQUIRED_FIELDS = ['nome', 'sobrenome', 'email']
 
     class Meta:
         db_table = 'usuario'
@@ -137,6 +157,11 @@ class Usuario(AbstractBaseUser, PermissionsMixin):
         # alguns fluxos (ex: testes, alguns backends). Traduzimos de volta
         # para 'situacao' em vez de aceitar um campo booleano paralelo.
         self.situacao = self.Situacao.ATIVO if value else self.Situacao.INATIVO
+
+    def save(self, *args, **kwargs):
+        if self.cpf:
+            self.cpf = ''.join(filter(str.isdigit, self.cpf))
+        super().save(*args, **kwargs)
 
 
 class UnidadeMedida(models.Model):
@@ -174,7 +199,7 @@ class Fornecedor(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     nome = models.CharField(max_length=200)
     cnpj = models.CharField(max_length=18, unique=True)
-    telefone = models.CharField(max_length=20, null=True, blank=True)
+    telefone = models.CharField(max_length=20, null=True, blank=True, validators=[validar_telefone])
     email = models.EmailField(null=True, blank=True)
     nome_vendedor = models.CharField(max_length=150, null=True, blank=True)
 

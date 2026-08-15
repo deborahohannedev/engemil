@@ -2,11 +2,12 @@
 Permissões da API, baseadas em PERFIL.funcao (documento de visão v1.1,
 seção 4.1 — perfis PER-01 a PER-06).
 
-⚠️ PREMISSA ASSUMIDA (confirmar com o cliente): ADMINISTRADOR (PER-05) e
-ENGENHEIRO (PER-04) sempre têm acesso, independente da lista de perfis
-exigida por view.
+ADMINISTRADOR (PER-05) e ENGENHEIRO (PER-04) sempre têm acesso irrestrito,
+independente da lista de perfis exigida por view — confirmado com o cliente.
+COMPRAS (PER-03) e CONSULTA (PER-06) ainda não têm mapeamento de acesso
+definido — não aparecem em nenhum `funcoes_permitidas` até isso ser decidido.
 """
-from rest_framework.permissions import BasePermission
+from rest_framework.permissions import SAFE_METHODS, BasePermission
 
 
 class Funcao:
@@ -24,6 +25,11 @@ class PerfilPermission(BasePermission):
     """
     Permissão de nível de view. Cada view/viewset deve declarar o
     atributo de classe `funcoes_permitidas` (set de strings de Funcao).
+
+    Suporta também o atributo opcional `funcoes_somente_leitura` (set):
+    função que estiver nesse set só passa em métodos seguros (GET/HEAD/
+    OPTIONS) — usado pra liberar leitura de recursos de apoio (ex.:
+    Fornecedor, Demanda, Posto) sem liberar a gestão (criar/editar/excluir).
     """
 
     def has_permission(self, request, view):
@@ -42,18 +48,38 @@ class PerfilPermission(BasePermission):
         if funcao_usuario in Funcao.SEMPRE_PERMITIDOS:
             return True
 
-        return funcao_usuario in funcoes_permitidas
+        if funcao_usuario not in funcoes_permitidas:
+            return False
+
+        funcoes_somente_leitura = getattr(view, 'funcoes_somente_leitura', set())
+        if funcao_usuario in funcoes_somente_leitura and request.method not in SAFE_METHODS:
+            return False
+
+        return True
 
 
-class ApenasProprioPosto(BasePermission):
+class ApenasProprioSolicitante(BasePermission):
     """
-    Permissão de nível de OBJETO: Encarregado (PER-01) só pode
-    criar/editar/cancelar solicitações do próprio posto de lotação.
-    Espera que o objeto tenha um atributo `.posto` (ex: Solicitacao).
+    Permissão de nível de OBJETO: Encarregado (PER-01) só acessa
+    Solicitações que ele mesmo criou. Espera objeto com `.solicitante_id`
+    (ex.: Solicitacao).
     """
 
     def has_object_permission(self, request, view, obj):
         if request.user.perfil.funcao != Funcao.ENCARREGADO:
             return True
 
-        return obj.posto_id == request.user.posto_id
+        return obj.solicitante_id == request.user.id
+
+
+class ApenasDevolucaoDoProprioSolicitante(BasePermission):
+    """
+    Permissão de nível de OBJETO: Encarregado (PER-01) só acessa
+    Devoluções ligadas a Solicitações que ele mesmo criou.
+    """
+
+    def has_object_permission(self, request, view, obj):
+        if request.user.perfil.funcao != Funcao.ENCARREGADO:
+            return True
+
+        return obj.item_solicitacao.solicitacao.solicitante_id == request.user.id
