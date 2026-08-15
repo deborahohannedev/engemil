@@ -4,11 +4,14 @@ from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
+from django.core.exceptions import ValidationError as DjangoValidationError
+
 from api.permissions import Funcao, PerfilPermission
 from api.serializers.inventario import (
     InventarioCreateSerializer, InventarioSerializer, ItemInventarioSerializer,
 )
 from core.models import Material, Usuario
+from core.validators import validar_quantidade_por_unidade
 from inventario.domain.services import InventarioIncompletoError, InventarioService
 from inventario.models import Inventario, ItemInventario
 
@@ -17,6 +20,7 @@ class InventarioViewSet(viewsets.ModelViewSet):
     queryset = Inventario.objects.all()
     permission_classes = [PerfilPermission]
     funcoes_permitidas = {Funcao.ALMOXARIFADO}
+    filterset_fields = ['situacao']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -97,6 +101,11 @@ class ItemInventarioViewSet(viewsets.ModelViewSet):
                 {'quantidade_fisica': 'Valor inválido — informe um número.'},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        try:
+            validar_quantidade_por_unidade(quantidade, item.material.unidade)
+        except DjangoValidationError as exc:
+            return Response({'quantidade_fisica': exc.messages}, status=status.HTTP_400_BAD_REQUEST)
 
         self._service.registrar_contagem_fisica(item, quantidade)
         item.refresh_from_db()

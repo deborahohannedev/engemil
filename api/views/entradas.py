@@ -1,3 +1,4 @@
+import django_filters
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -9,10 +10,25 @@ from entradas.models import Entrada
 from entradas.domain.services import EntradaJaConfirmadaError, EntradaService
 
 
+class EntradaFilter(django_filters.FilterSet):
+    # confirmada_em é datetime (nullable) — não é um campo de escolha direta
+    # pro django-filter, então vira um BooleanFilter derivado via isnull.
+    confirmada = django_filters.BooleanFilter(method='filter_confirmada')
+
+    class Meta:
+        model = Entrada
+        fields = ['fornecedor']
+
+    def filter_confirmada(self, queryset, name, value):
+        return queryset.filter(confirmada_em__isnull=not value)
+
+
 class EntradaViewSet(viewsets.ModelViewSet):
     queryset = Entrada.objects.all()
     permission_classes = [PerfilPermission]
     funcoes_permitidas = {Funcao.ALMOXARIFADO}
+    filterset_class = EntradaFilter
+    search_fields = ['nota_fiscal']
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
