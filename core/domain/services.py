@@ -15,7 +15,7 @@ mudar quando a decisão for tomada.
 """
 from decimal import Decimal
 
-from django.db import transaction
+from django.db import models, transaction
 
 from core.domain.value_objects import OrigemMovimentacao
 from core.models import Material, Movimentacao, Usuario
@@ -51,49 +51,53 @@ class MovimentacaoService:
         quantidade_delta: Decimal,
         valor_delta: Decimal,
     ) -> Movimentacao:
-        quantidade_anterior, saldo_anterior = self._estado_atual(material)
-        quantidade_posterior = quantidade_anterior + quantidade_delta
-        saldo_posterior = saldo_anterior + valor_delta
+        with transaction.atomic():
+            material = Material.objects.select_for_update().get(pk=material.pk)
+            quantidade_anterior = material.estoque_real
+            saldo_anterior = self._ultimo_saldo(material)
+            quantidade_posterior = quantidade_anterior + quantidade_delta
+            saldo_posterior = saldo_anterior + valor_delta
 
-        if quantidade_posterior < 0:
-            raise SaldoInsuficienteError(
-                f'Quantidade insuficiente para {material.codigo}: '
-                f'quantidade atual {quantidade_anterior}, tentativa de variação {quantidade_delta}.'
+            if quantidade_posterior < 0:
+                raise SaldoInsuficienteError(
+                    f'Quantidade insuficiente para {material.codigo}: '
+                    f'quantidade atual {quantidade_anterior}, tentativa de variação {quantidade_delta}.'
+                )
+
+            movimentacao = Movimentacao.objects.create(
+                material=material,
+                usuario=usuario,
+                tipo=origem.tipo,
+                quantidade_anterior=quantidade_anterior,
+                quantidade_posterior=quantidade_posterior,
+                saldo_anterior=saldo_anterior,
+                saldo_posterior=saldo_posterior,
+                data_movimentacao=self._agora(),
+                **origem.as_field_kwargs(),
             )
 
-        return Movimentacao.objects.create(
-            material=material,
-            usuario=usuario,
-            tipo=origem.tipo,
-            quantidade_anterior=quantidade_anterior,
-            quantidade_posterior=quantidade_posterior,
-            saldo_anterior=saldo_anterior,
-            saldo_posterior=saldo_posterior,
-            data_movimentacao=self._agora(),
-            **origem.as_field_kwargs(),
-        )
+            material.estoque_real = quantidade_posterior
+            material.save(update_fields=['estoque_real'])
 
-    def _estado_atual(self, material: Material) -> tuple[Decimal, Decimal]:
-        """
-        Retorna (quantidade_atual_em_unidades, saldo_atual_em_reais),
-        a partir da última movimentação registrada.
+        return movimentacao
 
-        NOTA DE ARQUITETURA: consulta roda a cada movimentação criada.
-        Aceitável para o volume do MVP; avaliar saldo materializado se o
-        histórico crescer muito.
+    def _ultimo_saldo(self, material: Material) -> Decimal:
         """
-        # todo: validar se pode ser o último registro de movimentação ou se precisa ser o último registro de movimentação do tipo ENTRADA 
+        Saldo em R$ a partir da última movimentação registrada — só o
+        valor monetário ainda não é materializado (só a quantidade, em
+        `Material.estoque_real`).
+
+        # todo: validar se pode ser o último registro de movimentação ou se precisa ser o último registro de movimentação do tipo ENTRADA
         # (para não considerar devoluções, por exemplo)
         # e se devolver tem que fazer a movimentação de entrada ou se é só uma movimentação de saída (ou seja, se o saldo do material é afetado ou não)?
+        """
         ultima = (
             Movimentacao.objects
             .filter(material=material)
             .order_by('-data_movimentacao')
             .first()
         )
-        if ultima is None:
-            return Decimal('0'), Decimal('0')
-        return ultima.quantidade_posterior, ultima.saldo_posterior
+        return ultima.saldo_posterior if ultima else Decimal('0')
 
     @staticmethod
     def _agora():
@@ -172,11 +176,13 @@ class MovimentacaoService:
 class SaldoEstoqueService:
 
     def quantidade_atual(self, material: Material) -> Decimal:
-        return self.estado_atual(material)[0]
+        return material.estoque_real
 
     def estado_atual(self, material: Material) -> tuple[Decimal, Decimal]:
         """
         Retorna (quantidade_atual_em_unidades, saldo_atual_em_reais).
+        Quantidade vem de `Material.estoque_real` (materializado pelo
+        MovimentacaoService); saldo em R$ ainda vem da última Movimentacao.
         """
         ultima = (
             Movimentacao.objects
@@ -184,20 +190,14 @@ class SaldoEstoqueService:
             .order_by('-data_movimentacao')
             .first()
         )
-        if ultima is None:
-            return Decimal('0'), Decimal('0')
-        return ultima.quantidade_posterior, ultima.saldo_posterior
+        saldo_atual = ultima.saldo_posterior if ultima else Decimal('0')
+        return material.estoque_real, saldo_atual
 
     def verificar_disponibilidade(self, material: Material, quantidade: Decimal) -> bool:
         return self.quantidade_atual(material) >= quantidade
 
     def materiais_abaixo_do_minimo(self):
-        """
-        NOTA: implementação ingênua (itera todo material ativo, calcula
-        quantidade um a um). Funciona para o volume do MVP.
-        """
-        abaixo_do_minimo = []
-        for material in Material.objects.filter(situacao=Material.Situacao.ATIVO):
-            if self.quantidade_atual(material) < material.estoque_minimo:
-                abaixo_do_minimo.append(material)
-        return abaixo_do_minimo
+        return Material.objects.filter(
+            situacao=Material.Situacao.ATIVO,
+            estoque_real__lt=models.F('estoque_minimo'),
+        )

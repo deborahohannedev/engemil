@@ -1,14 +1,21 @@
+from django.core.exceptions import ValidationError as DjangoValidationError
 from rest_framework import serializers
 
+from core.validators import validar_quantidade_por_unidade
 from entradas.models import Entrada, ItemEntrada
 
 
 class ItemEntradaSerializer(serializers.ModelSerializer):
     material_codigo = serializers.CharField(source='material.codigo', read_only=True)
+    material_descricao = serializers.CharField(source='material.descricao', read_only=True)
+    unidade_sigla = serializers.CharField(source='material.unidade.sigla', read_only=True)
 
     class Meta:
         model = ItemEntrada
-        fields = ['id', 'entrada', 'material', 'material_codigo', 'quantidade', 'valor_unitario', 'valor_total']
+        fields = [
+            'id', 'entrada', 'material', 'material_codigo', 'material_descricao', 'unidade_sigla',
+            'quantidade', 'valor_unitario', 'valor_total',
+        ]
         # valor_total é sempre calculado no save() do model — nunca aceito como input
         read_only_fields = ['valor_total']
 
@@ -27,6 +34,13 @@ class ItemEntradaCreateSerializer(serializers.ModelSerializer):
         if valor_unitario < 0:
             raise serializers.ValidationError('Valor unitário não pode ser negativo.')
         return valor_unitario
+
+    def validate(self, data):
+        try:
+            validar_quantidade_por_unidade(data['quantidade'], data['material'].unidade)
+        except DjangoValidationError as exc:
+            raise serializers.ValidationError({'quantidade': exc.messages})
+        return data
 
 
 class EntradaSerializer(serializers.ModelSerializer):

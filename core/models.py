@@ -247,8 +247,11 @@ class Material(models.Model):
     unidade = models.ForeignKey(
         'core.UnidadeMedida', on_delete=models.PROTECT, related_name='materiais',
     )
-    estoque_minimo = models.DecimalField(max_digits=14, decimal_places=3)
-    estoque_ideal = models.DecimalField(max_digits=14, decimal_places=3)
+    estoque_minimo = models.DecimalField(max_digits=14, decimal_places=3, null=True, blank=True)
+    valor_unitario = models.DecimalField(max_digits=14, decimal_places=2, null=True, blank=True)
+    # saldo atual — mantido pelo MovimentacaoService, nunca setado direto pelo
+    # usuário; resultado acumulado de todas as movimentações do material.
+    estoque_real = models.DecimalField(max_digits=14, decimal_places=3, default=Decimal('0'))
     situacao = models.CharField(max_length=20, choices=Situacao.choices, default=Situacao.ATIVO)
     referencia_tecnica = models.ForeignKey(
         'core.ReferenciaTecnica', on_delete=models.SET_NULL, related_name='materiais',
@@ -264,8 +267,8 @@ class Material(models.Model):
                 name='ck_material_estoque_minimo',
             ),
             models.CheckConstraint(
-                check=models.Q(estoque_ideal__gte=models.F('estoque_minimo')),
-                name='ck_material_estoque_ideal',
+                check=models.Q(valor_unitario__gte=0),
+                name='ck_material_valor_unitario_nao_negativo',
             ),
         ]
 

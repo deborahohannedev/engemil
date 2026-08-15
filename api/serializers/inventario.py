@@ -5,12 +5,14 @@ from inventario.models import Inventario, ItemInventario, ParticipanteInventario
 
 class ItemInventarioSerializer(serializers.ModelSerializer):
     material_codigo = serializers.CharField(source='material.codigo', read_only=True)
+    material_descricao = serializers.CharField(source='material.descricao', read_only=True)
+    unidade_sigla = serializers.CharField(source='material.unidade.sigla', read_only=True)
     foi_contado = serializers.SerializerMethodField()
 
     class Meta:
         model = ItemInventario
         fields = [
-            'id', 'inventario', 'material', 'material_codigo',
+            'id', 'inventario', 'material', 'material_codigo', 'material_descricao', 'unidade_sigla',
             'saldo_sistema', 'quantidade_sistema', 'quantidade_fisica',
             'divergencia', 'ajuste', 'observacao', 'foi_contado',
         ]
