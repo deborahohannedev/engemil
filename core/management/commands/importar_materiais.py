@@ -26,6 +26,7 @@ UNIDADES_PADRAO = {
     'cm3': 'Centímetro cúbico',
     'kg': 'Quilograma',
     'pct': 'Pacote',
+    'cx': 'Caixa',
 }
 
 LINHA_INICIO_MATERIAIS = 18  # primeira linha de dado da Tabela 2 (materiais)
@@ -90,7 +91,6 @@ class Command(BaseCommand):
                         descricao=descricao_limpa,
                         unidade=unidade,
                         estoque_minimo=Decimal('0'),
-                        estoque_ideal=Decimal('0'),
                         situacao=Material.Situacao.ATIVO,
                     )
                 criados += 1
