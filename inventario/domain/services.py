@@ -5,11 +5,14 @@ InventarioService.encerrar() é o ÚNICO ponto autorizado a preencher
 encerrado_em/encerrado_por em Inventario e a disparar os ajustes de
 estoque resultantes da contagem.
 
-⚠️ PREMISSAS ASSUMIDAS (confirmar com o cliente):
-1. encerrar() exige que TODOS os itens tenham sido contados antes de
-   permitir o encerramento.
-2. Todo item com divergência gera automaticamente um ajuste de estoque
-   igual à divergência integral, sem etapa de aprovação item a item.
+⚠️ PREMISSA ASSUMIDA (confirmar com o cliente):
+- Todo item com divergência gera automaticamente um ajuste de estoque
+  igual à divergência integral, sem etapa de aprovação item a item.
+
+Item não contado manualmente antes do encerramento: quantidade física
+assumida = quantidade do sistema (sem divergência) — decisão da
+Deborah, encerrar() não fica mais bloqueado esperando 100% dos itens
+contados.
 """
 from decimal import Decimal
 
@@ -21,11 +24,6 @@ from core.models import Material, Usuario
 from inventario.models import Inventario, ItemInventario, ParticipanteInventario
 
 
-class InventarioIncompletoError(Exception):
-    """Levantada ao tentar encerrar um inventário com itens não contados."""
-    pass
-
-
 class InventarioService:
 
     def __init__(self):
@@ -33,12 +31,29 @@ class InventarioService:
         self._saldo_service = SaldoEstoqueService()
 
 
-    def iniciar(self, materiais: list, observacao: str = '') -> Inventario:
+    # ⚠️ LIMITE TEMPORÁRIO PRA DEMO (MVP) — ver TODO.md item 9. A regra de
+    # negócio real é TODOS os materiais ATIVO; isso está artificialmente
+    # limitado aos 10 primeiros (por `codigo`) porque a tela ainda não
+    # aguenta bem ~979 itens de uma vez (contagem/salvamento ficando
+    # lento/travando). Reverter pra `[:LIMITE_TEMPORARIO_DEMO]` → sem
+    # limite assim que a otimização de performance for feita.
+    LIMITE_TEMPORARIO_DEMO = 10
+
+    def iniciar(self, observacao: str = '') -> Inventario:
         """
-        Cria o inventário e já gera um ItemInventario para cada material
-        informado, capturando a quantidade/saldo do sistema no momento
-        do início da contagem (snapshot).
+        Cria o inventário incluindo automaticamente os materiais com
+        situação ATIVO — não é mais uma seleção manual (pedido do cliente:
+        o inventário sempre parte da base completa de materiais ativos).
+        Já gera um ItemInventario por material, capturando a
+        quantidade/saldo do sistema no momento do início da contagem
+        (snapshot).
+
+        NOTA: por ora limitado aos primeiros `LIMITE_TEMPORARIO_DEMO`
+        materiais — ver comentário acima da constante.
         """
+        materiais = Material.objects.filter(
+            situacao=Material.Situacao.ATIVO,
+        )[:self.LIMITE_TEMPORARIO_DEMO]
         with transaction.atomic():
             inventario = Inventario.objects.create(
                 data_inicio=timezone.now(),
@@ -71,30 +86,29 @@ class InventarioService:
 
     def encerrar(self, inventario: Inventario, usuario: Usuario) -> list:
         """
-        Encerra o inventário: valida que todos os itens foram contados,
-        gera Movimentacao de ajuste para cada item com divergência, e
-        marca o inventário como ENCERRADO. Tudo em uma única transação.
+        Encerra o inventário: item que não foi contado manualmente recebe
+        quantidade_fisica = quantidade_sistema automaticamente (sem
+        divergência) — encerrar não fica bloqueado esperando 100% dos
+        itens contados. Gera Movimentacao de ajuste para cada item com
+        divergência, e marca o inventário como ENCERRADO. Tudo em uma
+        única transação.
         """
         itens = list(inventario.itens.all())
-
-        nao_contados = [item for item in itens if not item.foi_contado()]
-        if nao_contados:
-            codigos = ', '.join(item.material.codigo for item in nao_contados)
-            raise InventarioIncompletoError(
-                f'Inventário possui {len(nao_contados)} item(ns) não contado(s): {codigos}.'
-            )
 
         movimentacoes = []
         with transaction.atomic():
             for item in itens:
+                if not item.foi_contado():
+                    item.quantidade_fisica = item.quantidade_sistema
+
                 divergencia = item.calcular_divergencia()
                 if divergencia and divergencia != 0:
                     item.ajuste = divergencia
-                    item.save(update_fields=['divergencia', 'ajuste'])
+                    item.save(update_fields=['quantidade_fisica', 'divergencia', 'ajuste'])
                     mov = self._movimentacao_service.registrar_ajuste_inventario(item, usuario)
                     movimentacoes.append(mov)
                 else:
-                    item.save(update_fields=['divergencia'])
+                    item.save(update_fields=['quantidade_fisica', 'divergencia'])
 
             inventario.situacao = Inventario.Situacao.ENCERRADO
             inventario.data_fim = timezone.now()

@@ -5,14 +5,16 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.http import HttpResponse
 
 from api.permissions import Funcao, PerfilPermission
 from api.serializers.inventario import (
     InventarioCreateSerializer, InventarioSerializer, ItemInventarioSerializer,
 )
-from core.models import Material, Usuario
+from core.models import Usuario
 from core.validators import validar_quantidade_por_unidade
-from inventario.domain.services import InventarioIncompletoError, InventarioService
+from inventario.domain.relatorio import gerar_laudo_pdf
+from inventario.domain.services import InventarioService
 from inventario.models import Inventario, ItemInventario
 
 
@@ -35,11 +37,7 @@ class InventarioViewSet(viewsets.ModelViewSet):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        material_ids = serializer.validated_data.pop('material_ids')
-        materiais = list(Material.objects.filter(id__in=material_ids))
-
         inventario = self._service.iniciar(
-            materiais=materiais,
             observacao=serializer.validated_data.get('observacao', ''),
         )
         return Response(InventarioSerializer(inventario).data, status=status.HTTP_201_CREATED)
@@ -62,13 +60,17 @@ class InventarioViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def encerrar(self, request, pk=None):
         inventario = self.get_object()
-        try:
-            self._service.encerrar(inventario, usuario=request.user)
-        except InventarioIncompletoError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
-
+        self._service.encerrar(inventario, usuario=request.user)
         inventario.refresh_from_db()
         return Response(InventarioSerializer(inventario).data)
+
+    @action(detail=True, methods=['get'])
+    def laudo(self, request, pk=None):
+        inventario = self.get_object()
+        pdf_bytes = gerar_laudo_pdf(inventario)
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
+        response['Content-Disposition'] = f'attachment; filename="laudo-inventario-{inventario.id}.pdf"'
+        return response
 
 
 class ItemInventarioViewSet(viewsets.ModelViewSet):
@@ -82,7 +84,6 @@ class ItemInventarioViewSet(viewsets.ModelViewSet):
         super().__init__(*args, **kwargs)
         self._service = InventarioService()
 
-    @action(detail=True, methods=['post'], url_path='contagem-fisica')
     @action(detail=True, methods=['post'], url_path='contagem-fisica')
     def contagem_fisica(self, request, pk=None):
         item = self.get_object()

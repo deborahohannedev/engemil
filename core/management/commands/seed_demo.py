@@ -329,10 +329,10 @@ class Command(BaseCommand):
         if Inventario.objects.filter(observacao=observacao).exists():
             return
 
-        inventario = self._inventario_service.iniciar(
-            materiais=self.materiais[:4], observacao=observacao,
-        )
-        # conta só metade dos itens de propósito — fica EM_ANDAMENTO
+        # iniciar() sempre inclui todos os materiais ATIVO agora (pedido do
+        # cliente) — não seleciona mais um subconjunto.
+        inventario = self._inventario_service.iniciar(observacao=observacao)
+        # conta só uma parte dos itens de propósito — fica EM_ANDAMENTO
         for item in inventario.itens.all()[:2]:
             self._inventario_service.registrar_contagem_fisica(item, item.quantidade_sistema)
 
@@ -341,9 +341,7 @@ class Command(BaseCommand):
         if Inventario.objects.filter(observacao=observacao).exists():
             return
 
-        inventario = self._inventario_service.iniciar(
-            materiais=self.materiais[6:9], observacao=observacao,
-        )
+        inventario = self._inventario_service.iniciar(observacao=observacao)
         itens = list(inventario.itens.all())
         for i, item in enumerate(itens):
             # o primeiro item conta com divergência de propósito, pra
