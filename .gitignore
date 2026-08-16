@@ -218,3 +218,6 @@ __marimo__/
 .streamlit/secrets.toml
 staticfiles/
 *:Zone.Identifier
+
+# notas de trabalho, fora do produto (ver OHANNE_METHOD.md)
+.claudecodeignore/
