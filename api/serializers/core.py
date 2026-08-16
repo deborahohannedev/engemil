@@ -127,12 +127,13 @@ class MovimentacaoSerializer(serializers.ModelSerializer):
     material_codigo = serializers.CharField(source='material.codigo', read_only=True)
     material_descricao = serializers.CharField(source='material.descricao', read_only=True)
     unidade_sigla = serializers.CharField(source='material.unidade.sigla', read_only=True)
+    usuario_nome = serializers.CharField(source='usuario.__str__', read_only=True)
 
     class Meta:
         model = Movimentacao
         fields = [
             'id', 'material', 'material_codigo', 'material_descricao', 'unidade_sigla', 'solicitacao', 'entrada',
-            'devolucao', 'item_inventario', 'usuario', 'tipo',
+            'devolucao', 'item_inventario', 'usuario', 'usuario_nome', 'tipo',
             'quantidade_anterior', 'quantidade_posterior',
             'saldo_anterior', 'saldo_posterior', 'observacao', 'data_movimentacao',
         ]
