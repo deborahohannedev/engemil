@@ -139,3 +139,29 @@ class SolicitacaoService:
             novo_status = Solicitacao.Status.EM_ANDAMENTO
         solicitacao.status = novo_status
         solicitacao.save(update_fields=['status'])
+
+    def reconciliar_status_apos_edicao(self, solicitacao: Solicitacao) -> None:
+        """
+        Recalcula o status da Solicitacao depois de uma edição de
+        cabeçalho/itens (SolicitacaoEditSerializer). Diferente de
+        _atualizar_status_solicitacao (chamado só depois de uma tentativa
+        real de saída): uma edição pura, sem nenhum item ainda atendido,
+        NÃO deve empurrar uma solicitação ABERTA para EM_ANDAMENTO — só
+        confirmar-saida faz esse avanço de ciclo. A única transição que
+        edição sozinha pode causar é ATENDIDA, no caso raro de editar a
+        quantidade de um item já ATENDIDO e isso deixar todos os itens
+        atendidos de novo.
+        """
+        itens = list(solicitacao.itens.all())
+        if itens and all(i.status == ItemSolicitacao.Status.ATENDIDO for i in itens):
+            novo_status = Solicitacao.Status.ATENDIDA
+        elif solicitacao.status == Solicitacao.Status.ABERTA:
+            novo_status = Solicitacao.Status.ABERTA
+        elif any(i.status == ItemSolicitacao.Status.ATENDIDO for i in itens):
+            novo_status = Solicitacao.Status.PARCIALMENTE_ATENDIDA
+        else:
+            novo_status = Solicitacao.Status.EM_ANDAMENTO
+
+        if novo_status != solicitacao.status:
+            solicitacao.status = novo_status
+            solicitacao.save(update_fields=['status'])

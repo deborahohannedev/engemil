@@ -3,7 +3,9 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from api.permissions import ApenasProprioSolicitante, Funcao, PerfilPermission
-from api.serializers.solicitacoes import SolicitacaoCreateSerializer, SolicitacaoSerializer
+from api.serializers.solicitacoes import (
+    SolicitacaoCreateSerializer, SolicitacaoEditSerializer, SolicitacaoSerializer,
+)
 from core.domain.services import SaldoInsuficienteError
 from solicitacoes.domain.services import (
     DisponibilidadeInsuficienteError, SolicitacaoNaoPodeSerReabertaError, SolicitacaoService,
@@ -31,6 +33,8 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
     def get_serializer_class(self):
         if self.action == 'create':
             return SolicitacaoCreateSerializer
+        if self.action in ('update', 'partial_update'):
+            return SolicitacaoEditSerializer
         return SolicitacaoSerializer
 
     def create(self, request, *args, **kwargs):
@@ -38,6 +42,18 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         solicitacao = serializer.save()
         return Response(SolicitacaoSerializer(solicitacao).data, status=status.HTTP_201_CREATED)
+
+    def update(self, request, *args, **kwargs):
+        # Edição de cabeçalho + itens (Encarregado dono / Almoxarifado /
+        # Administrador / Engenheiro) — só permitida em status ABERTA,
+        # EM_ANDAMENTO ou PARCIALMENTE_ATENDIDA; validado dentro de
+        # SolicitacaoEditSerializer, não aqui.
+        partial = kwargs.pop('partial', False)
+        solicitacao = self.get_object()
+        serializer = self.get_serializer(solicitacao, data=request.data, partial=partial)
+        serializer.is_valid(raise_exception=True)
+        solicitacao = serializer.save()
+        return Response(SolicitacaoSerializer(solicitacao).data)
 
     @action(detail=True, methods=['get'])
     def disponibilidade(self, request, pk=None):
