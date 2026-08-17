@@ -16,12 +16,16 @@ class DevolucaoSerializer(serializers.ModelSerializer):
     unidade_sigla = serializers.CharField(
         source='item_solicitacao.material.unidade.sigla', read_only=True,
     )
+    responsavel_conferencia_nome = serializers.CharField(
+        source='responsavel_conferencia.__str__', read_only=True,
+    )
     esta_pendente = serializers.SerializerMethodField()
 
     class Meta:
         model = Devolucao
         fields = [
-            'id', 'item_solicitacao', 'material_codigo', 'material_descricao', 'unidade_sigla', 'responsavel_conferencia',
+            'id', 'item_solicitacao', 'material_codigo', 'material_descricao', 'unidade_sigla',
+            'responsavel_conferencia', 'responsavel_conferencia_nome',
             'quantidade', 'condicao', 'decisao', 'observacao',
             'data_inicial', 'data_final', 'esta_pendente',
         ]
