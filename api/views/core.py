@@ -120,14 +120,14 @@ class PerfilViewSet(viewsets.ModelViewSet):
 
 
 class MovimentacaoViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = Movimentacao.objects.all()
+    queryset = Movimentacao.objects.select_related('material', 'material__unidade', 'usuario')
     serializer_class = MovimentacaoSerializer
     permission_classes = [IsAuthenticated]
     filterset_fields = ['material', 'tipo', 'usuario']
     search_fields = ['material__codigo', 'material__descricao']
 
     def get_queryset(self):
-        queryset = Movimentacao.objects.all()
+        queryset = Movimentacao.objects.select_related('material', 'material__unidade', 'usuario')
         if self.request.user.perfil.funcao == Funcao.ENCARREGADO:
             return queryset.filter(
                 tipo__in=[Movimentacao.Tipo.SAIDA, Movimentacao.Tipo.DEVOLUCAO],

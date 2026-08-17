@@ -1,9 +1,11 @@
 from decimal import Decimal
 
 from django.core.exceptions import ValidationError as DjangoValidationError
+from django.db import transaction
 from rest_framework import serializers
 
 from core.validators import validar_quantidade_por_unidade
+from solicitacoes.domain.services import SolicitacaoService
 from solicitacoes.models import ItemSolicitacao, Solicitacao
 
 
@@ -134,4 +136,150 @@ class SolicitacaoCreateSerializer(serializers.ModelSerializer):
         for item_data in itens_data:
             ItemSolicitacao.objects.create(solicitacao=solicitacao, **item_data)
 
+        return solicitacao
+
+
+class ItemSolicitacaoEditSerializer(serializers.ModelSerializer):
+    """
+    'id' presente = item já existente sendo alterado (ou mantido igual);
+    'id' ausente = item novo, criado igual ao fluxo de criação. Todo item
+    existente que NÃO aparecer na lista enviada é entendido como removido
+    pelo usuário — ver SolicitacaoEditSerializer.update().
+    """
+    id = serializers.UUIDField(required=False)
+    observacao = serializers.CharField(required=True, allow_blank=False)
+
+    class Meta:
+        model = ItemSolicitacao
+        fields = ['id', 'material', 'quantidade_solicitada', 'observacao']
+
+    def validate_quantidade_solicitada(self, quantidade):
+        if quantidade <= 0:
+            raise serializers.ValidationError('Quantidade solicitada deve ser maior que zero.')
+        return quantidade
+
+
+class SolicitacaoEditSerializer(serializers.ModelSerializer):
+    """
+    Serializer de edição — usado só pelas actions update/partial_update
+    da view (PATCH/PUT em /solicitacoes/<id>/). Só é permitido editar uma
+    Solicitacao com status ABERTA, EM_ANDAMENTO ou PARCIALMENTE_ATENDIDA
+    (RN combinada com o cliente — ver AskUserQuestion desta sessão).
+
+    'numero' fica de fora de propósito — não faz parte do fluxo de
+    edição, só cabeçalho (demanda/posto/observação) + itens.
+
+    Item já com quantidade_atendida > 0 (parcial ou totalmente atendido)
+    não pode trocar de material nem ter a quantidade reduzida abaixo do
+    que já saiu do estoque, e não pode ser removido — o que já saiu não
+    tem como "desacontecer" por aqui (RN-006/007, Movimentacao é
+    append-only). Aumentar a quantidade de um item já ATENDIDO é
+    permitido: reabre o item pra mais atendimento (mesma regra de status
+    que confirmar_saida usa).
+    """
+    itens = ItemSolicitacaoEditSerializer(many=True)
+
+    class Meta:
+        model = Solicitacao
+        fields = ['demanda', 'posto', 'observacao', 'itens']
+
+    def validate(self, dados):
+        solicitacao = self.instance
+        editaveis = (
+            Solicitacao.Status.ABERTA,
+            Solicitacao.Status.EM_ANDAMENTO,
+            Solicitacao.Status.PARCIALMENTE_ATENDIDA,
+        )
+        if solicitacao.status not in editaveis:
+            raise serializers.ValidationError(
+                f'Solicitação com status "{solicitacao.get_status_display()}" não pode ser editada.'
+            )
+        return dados
+
+    def validate_itens(self, itens):
+        if not itens:
+            raise serializers.ValidationError('Solicitação deve ter pelo menos um item (RN-002).')
+
+        itens_atuais = {item.id: item for item in self.instance.itens.all()}
+        materiais_vistos = set()
+
+        for item_data in itens:
+            item_id = item_data.get('id')
+            material = item_data['material']
+
+            if item_id is not None:
+                item_atual = itens_atuais.get(item_id)
+                if item_atual is None:
+                    raise serializers.ValidationError('Item não pertence a esta solicitação.')
+
+                if item_atual.quantidade_atendida > 0:
+                    if material.id != item_atual.material_id:
+                        raise serializers.ValidationError(
+                            f'Item {item_atual.material.codigo} já teve saída registrada — '
+                            f'não é possível trocar o material.'
+                        )
+                    if item_data['quantidade_solicitada'] < item_atual.quantidade_atendida:
+                        raise serializers.ValidationError(
+                            f'Item {item_atual.material.codigo}: quantidade não pode ficar menor '
+                            f'que {item_atual.quantidade_atendida}, já atendida.'
+                        )
+
+            if material.id in materiais_vistos:
+                raise serializers.ValidationError(
+                    f'Material {material.codigo} aparece mais de uma vez na solicitação.'
+                )
+            materiais_vistos.add(material.id)
+
+            try:
+                validar_quantidade_por_unidade(item_data['quantidade_solicitada'], material.unidade)
+            except DjangoValidationError as exc:
+                raise serializers.ValidationError(exc.messages)
+
+        ids_no_payload = {i['id'] for i in itens if i.get('id') is not None}
+        for item_id, item_atual in itens_atuais.items():
+            if item_id not in ids_no_payload and item_atual.quantidade_atendida > 0:
+                raise serializers.ValidationError(
+                    f'Item {item_atual.material.codigo} já teve saída registrada e não pode ser removido.'
+                )
+
+        return itens
+
+    def update(self, solicitacao, validated_data):
+        itens_data = validated_data.pop('itens')
+
+        with transaction.atomic():
+            for attr, value in validated_data.items():
+                setattr(solicitacao, attr, value)
+            solicitacao.save()
+
+            itens_atuais = {item.id: item for item in solicitacao.itens.all()}
+            ids_no_payload = set()
+
+            for item_data in itens_data:
+                item_id = item_data.pop('id', None)
+                if item_id is not None:
+                    ids_no_payload.add(item_id)
+                    item_atual = itens_atuais[item_id]
+                    item_atual.material = item_data['material']
+                    item_atual.quantidade_solicitada = item_data['quantidade_solicitada']
+                    item_atual.observacao = item_data['observacao']
+                    # mesma regra de status que confirmar_saida usa — aumentar
+                    # a quantidade de um item ATENDIDO o reabre pra DISPONIVEL.
+                    if item_atual.quantidade_atendida <= 0:
+                        item_atual.status = ItemSolicitacao.Status.PENDENTE
+                    elif item_atual.quantidade_atendida >= item_atual.quantidade_solicitada:
+                        item_atual.status = ItemSolicitacao.Status.ATENDIDO
+                    else:
+                        item_atual.status = ItemSolicitacao.Status.DISPONIVEL
+                    item_atual.save(update_fields=['material', 'quantidade_solicitada', 'observacao', 'status'])
+                else:
+                    ItemSolicitacao.objects.create(solicitacao=solicitacao, **item_data)
+
+            for item_id, item_atual in itens_atuais.items():
+                if item_id not in ids_no_payload:
+                    item_atual.delete()
+
+            SolicitacaoService().reconciliar_status_apos_edicao(solicitacao)
+
+        solicitacao.refresh_from_db()
         return solicitacao

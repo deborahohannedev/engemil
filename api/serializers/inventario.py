@@ -49,14 +49,11 @@ class InventarioSerializer(serializers.ModelSerializer):
 
 class InventarioCreateSerializer(serializers.ModelSerializer):
     """
-    Criação usa InventarioService.iniciar(materiais) na view — não é um
-    create() de model simples.
+    Criação usa InventarioService.iniciar(observacao) na view — não é um
+    create() de model simples. Não recebe lista de materiais: o service
+    sempre inclui todos os materiais com situação ATIVO automaticamente.
     """
-    material_ids = serializers.ListField(
-        child=serializers.UUIDField(), write_only=True,
-        help_text='Lista de IDs de Material a incluir no inventário.',
-    )
 
     class Meta:
         model = Inventario
-        fields = ['observacao', 'material_ids']
+        fields = ['observacao']
