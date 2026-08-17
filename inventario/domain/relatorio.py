@@ -7,6 +7,7 @@ Usa reportlab (sem dependência de sistema, diferente de weasyprint/wkhtmltopdf
 import io
 
 from django.conf import settings
+from django.db.models import Prefetch
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.units import cm
@@ -15,6 +16,7 @@ from reportlab.platypus import (
     Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
 )
 
+from core.models import Movimentacao
 from inventario.models import Inventario
 
 LOGO_PATH = settings.BASE_DIR / 'data' / 'logo.jpeg'
@@ -48,6 +50,13 @@ def gerar_laudo_pdf(inventario: Inventario) -> bytes:
     # teste manual com um código de material longo)
     estilo_celula = ParagraphStyle('celula', parent=styles['Normal'], fontSize=8, leading=10)
     estilo_celula_cabecalho = ParagraphStyle('celula_cabecalho', parent=styles['Normal'], fontSize=9, leading=11)
+    # destaque pro caso de erro (InventarioService.encerrar): item com
+    # divergência calculada mas SEM ajuste aplicado — precisa de resolução
+    # manual. Sem isso a observação de erro fica visualmente igual a uma
+    # observação qualquer, fácil de passar batido numa tabela grande.
+    estilo_celula_erro = ParagraphStyle(
+        'celula_erro', parent=estilo_celula, textColor=colors.HexColor('#a8071a'),
+    )
     elementos = []
 
     if LOGO_PATH.exists():
@@ -57,7 +66,21 @@ def gerar_laudo_pdf(inventario: Inventario) -> bytes:
     elementos.append(Paragraph('Laudo de Inventário', styles['Title']))
     elementos.append(Spacer(1, 0.3 * cm))
 
-    itens = list(inventario.itens.select_related('material', 'material__unidade').all())
+    # 'movimentacoes_ajuste' traz a Movimentacao real gerada pelo ajuste
+    # deste item (se algum foi aplicado) — dá pra mostrar no laudo o
+    # reajuste que de fato aconteceu no sistema (quantidade real antes/
+    # depois), não só a divergência calculada contra o retrato do início
+    # do inventário (que pode ter ficado desatualizado nesse meio-tempo —
+    # ver InventarioService.encerrar()).
+    itens = list(
+        inventario.itens.select_related('material', 'material__unidade')
+        .prefetch_related(Prefetch(
+            'movimentacoes',
+            queryset=Movimentacao.objects.filter(tipo=Movimentacao.Tipo.AJUSTE_INVENTARIO),
+            to_attr='movimentacoes_ajuste',
+        ))
+        .all()
+    )
     contados = sum(1 for item in itens if item.foi_contado())
 
     def _p(texto):
@@ -85,10 +108,29 @@ def gerar_laudo_pdf(inventario: Inventario) -> bytes:
 
     cabecalho_itens = [
         'Código', 'Descrição', 'Unidade', 'Qtd. Sistema', 'Qtd. Física',
-        'Divergência', 'Ajuste', 'Observação',
+        'Divergência', 'Ajuste', 'Estoque Real\nAntes → Depois', 'Observação',
     ]
     linhas = [cabecalho_itens]
+    linhas_com_pendencia = []
     for item in itens:
+        # mesmo caso tratado em InventarioService.encerrar(): divergência
+        # calculada mas ajuste não pôde ser aplicado (saldo atual do
+        # material não comportava) — fica marcado pra resolução manual.
+        tem_pendencia = item.ajuste is None and item.divergencia is not None and item.divergencia != 0
+        if tem_pendencia:
+            linhas_com_pendencia.append(len(linhas))  # índice desta linha na tabela
+
+        # quantidade_anterior/posterior são os valores REAIS do estoque no
+        # momento em que o ajuste foi de fato aplicado — podem diferir de
+        # quantidade_sistema/quantidade_fisica se outra movimentação mexeu
+        # no material entre o início do inventário e o encerramento.
+        movs_ajuste = item.movimentacoes_ajuste
+        reajuste_sistema = (
+            f'{_fmt_quantidade(movs_ajuste[0].quantidade_anterior)} → '
+            f'{_fmt_quantidade(movs_ajuste[0].quantidade_posterior)}'
+        ) if movs_ajuste else '—'
+
+        estilo_observacao = estilo_celula_erro if tem_pendencia else estilo_celula
         linhas.append([
             Paragraph(item.material.codigo, estilo_celula),
             Paragraph(item.material.descricao, estilo_celula),
@@ -97,15 +139,16 @@ def gerar_laudo_pdf(inventario: Inventario) -> bytes:
             _fmt_quantidade(item.quantidade_fisica),
             _fmt_quantidade(item.divergencia),
             _fmt_quantidade(item.ajuste),
-            Paragraph(item.observacao or '—', estilo_celula),
+            reajuste_sistema,
+            Paragraph(item.observacao or '—', estilo_observacao),
         ])
 
     tabela_itens = Table(
         linhas,
-        colWidths=[2.3 * cm, 7 * cm, 1.8 * cm, 2.5 * cm, 2.5 * cm, 2.5 * cm, 2.2 * cm, None],
+        colWidths=[2.2 * cm, 5.8 * cm, 1.6 * cm, 2.2 * cm, 2.2 * cm, 2.2 * cm, 2 * cm, 2.8 * cm, None],
         repeatRows=1,
     )
-    tabela_itens.setStyle(TableStyle([
+    estilo_tabela = [
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#2b2b2b')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
         ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
@@ -115,8 +158,27 @@ def gerar_laudo_pdf(inventario: Inventario) -> bytes:
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
         ('TOPPADDING', (0, 0), (-1, -1), 3),
-    ]))
+    ]
+    # linha inteira em vermelho claro pra item com pendência — sobrepõe o
+    # zebra-striping do ROWBACKGROUNDS acima (regras posteriores da
+    # TableStyle vencem as anteriores pra célula em comum).
+    for linha_idx in linhas_com_pendencia:
+        estilo_tabela.append(
+            ('BACKGROUND', (0, linha_idx), (-1, linha_idx), colors.HexColor('#fff1f0')),
+        )
+    tabela_itens.setStyle(TableStyle(estilo_tabela))
     elementos.append(tabela_itens)
+
+    if linhas_com_pendencia:
+        plural = len(linhas_com_pendencia) != 1
+        elementos.append(Spacer(1, 0.3 * cm))
+        elementos.append(Paragraph(
+            f'⚠ {len(linhas_com_pendencia)} '
+            f'{"itens destacados" if plural else "item destacado"} em vermelho '
+            f'{"ficaram" if plural else "ficou"} com ajuste pendente de resolução manual — '
+            f'ver observação de cada um.',
+            ParagraphStyle('aviso', parent=styles['Normal'], fontSize=9, textColor=colors.HexColor('#a8071a')),
+        ))
 
     doc.build(elementos)
     return buffer.getvalue()
