@@ -72,9 +72,9 @@ class SolicitacaoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'numero', 'status', 'data_solicitacao', 'data_prevista',
             'demanda', 'posto', 'posto_nome', 'solicitante', 'solicitante_nome',
-            'observacao', 'itens', 'valor_total', 'reaberta_em',
+            'observacao', 'itens', 'valor_total',
         ]
-        read_only_fields = ['status', 'reaberta_em']  # mudam só via services
+        read_only_fields = ['status']  # muda só via services
 
     def get_valor_total(self, obj):
         # soma só os itens cujo material tem valor_unitario cadastrado —

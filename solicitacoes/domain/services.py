@@ -22,11 +22,6 @@ class DisponibilidadeInsuficienteError(Exception):
     pass
 
 
-class SolicitacaoNaoPodeSerReabertaError(Exception):
-    """Levantada ao tentar reabrir uma solicitação que não está ATENDIDA."""
-    pass
-
-
 class SolicitacaoService:
 
     def __init__(self):
@@ -102,25 +97,6 @@ class SolicitacaoService:
             self._atualizar_status_solicitacao(solicitacao)
 
         return movimentacoes
-
-    def reabrir(self, solicitacao: Solicitacao) -> None:
-        """
-        Só é possível reabrir uma solicitação ATENDIDA — volta pra ABERTA
-        e marca reaberta_em. Não mexe no status dos itens: eles continuam
-        ATENDIDO, então uma nova entrada/edição de itens é que faria a
-        solicitação voltar a ter itens pendentes de fato.
-        """
-        from django.utils import timezone
-
-        if solicitacao.status != Solicitacao.Status.ATENDIDA:
-            raise SolicitacaoNaoPodeSerReabertaError(
-                f'Solicitação {solicitacao.numero} não pode ser reaberta — status atual é '
-                f'"{solicitacao.status}". Só é possível reabrir uma solicitação ATENDIDA.'
-            )
-
-        solicitacao.status = Solicitacao.Status.ABERTA
-        solicitacao.reaberta_em = timezone.now()
-        solicitacao.save(update_fields=['status', 'reaberta_em'])
 
     def cancelar(self, solicitacao: Solicitacao) -> None:
         solicitacao.itens.exclude(
