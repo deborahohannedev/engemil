@@ -19,8 +19,11 @@ class Solicitacao(models.Model):
     data_solicitacao = models.DateTimeField()
     data_prevista = models.DateTimeField(null=True, blank=True)
 
+    # contexto de Demanda tirado de uso por enquanto — campo opcional pra
+    # não quebrar solicitações antigas que já tinham demanda associada.
     demanda = models.ForeignKey(
         'core.Demanda', on_delete=models.PROTECT, related_name='solicitacoes',
+        null=True, blank=True,
     )
     posto = models.ForeignKey(
         'core.Posto', on_delete=models.PROTECT, related_name='solicitacoes',

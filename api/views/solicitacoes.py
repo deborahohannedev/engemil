@@ -15,7 +15,7 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
     queryset = Solicitacao.objects.all()
     permission_classes = [PerfilPermission, ApenasProprioSolicitante]
     funcoes_permitidas = {Funcao.ENCARREGADO, Funcao.ALMOXARIFADO}
-    filterset_fields = ['status', 'posto', 'demanda']
+    filterset_fields = ['status', 'posto']
     search_fields = ['numero']
 
     def __init__(self, *args, **kwargs):
