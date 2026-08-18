@@ -29,9 +29,6 @@ class Solicitacao(models.Model):
         'core.Usuario', on_delete=models.PROTECT, related_name='solicitacoes_criadas',
     )
     observacao = models.TextField(null=True, blank=True)
-    # preenchido só pelo SolicitacaoService.reabrir() — rastro de que a
-    # solicitação foi reaberta ao menos uma vez depois de ATENDIDA.
-    reaberta_em = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'solicitacao'

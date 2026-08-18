@@ -7,9 +7,7 @@ from api.serializers.solicitacoes import (
     SolicitacaoCreateSerializer, SolicitacaoEditSerializer, SolicitacaoSerializer,
 )
 from core.domain.services import SaldoInsuficienteError
-from solicitacoes.domain.services import (
-    DisponibilidadeInsuficienteError, SolicitacaoNaoPodeSerReabertaError, SolicitacaoService,
-)
+from solicitacoes.domain.services import DisponibilidadeInsuficienteError, SolicitacaoService
 from solicitacoes.models import Solicitacao
 
 
@@ -84,22 +82,5 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
     def cancelar(self, request, pk=None):
         solicitacao = self.get_object()
         self._service.cancelar(solicitacao)
-        solicitacao.refresh_from_db()
-        return Response(SolicitacaoSerializer(solicitacao).data)
-
-    @action(detail=True, methods=['post'])
-    def reabrir(self, request, pk=None):
-        if request.user.perfil.funcao not in ({Funcao.ALMOXARIFADO} | Funcao.SEMPRE_PERMITIDOS):
-            return Response(
-                {'detail': 'Apenas o Almoxarifado pode reabrir uma solicitação.'},
-                status=status.HTTP_403_FORBIDDEN,
-            )
-
-        solicitacao = self.get_object()
-        try:
-            self._service.reabrir(solicitacao)
-        except SolicitacaoNaoPodeSerReabertaError as exc:
-            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
-
         solicitacao.refresh_from_db()
         return Response(SolicitacaoSerializer(solicitacao).data)
