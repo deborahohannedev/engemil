@@ -27,12 +27,16 @@ class ItemSolicitacaoSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'solicitacao', 'material', 'material_codigo', 'material_descricao', 'unidade_sigla',
             'material_valor_unitario', 'valor_total',
-            'quantidade_solicitada', 'quantidade_atendida', 'quantidade_devolvida',
+            'quantidade_solicitada', 'quantidade_separada', 'quantidade_atendida', 'quantidade_devolvida',
+            'quantidade_saida_senado',
             'status', 'saldo_pendente', 'observacao', 'tem_devolucao_pendente',
         ]
         # campos derivados — nunca aceitos como input, só refletem o que
         # os services já gravaram
-        read_only_fields = ['quantidade_atendida', 'quantidade_devolvida', 'status']
+        read_only_fields = [
+            'quantidade_separada', 'quantidade_atendida', 'quantidade_devolvida',
+            'quantidade_saida_senado', 'status',
+        ]
 
     def get_saldo_pendente(self, obj):
         return obj.saldo_pendente()
@@ -59,6 +63,35 @@ class ItemSolicitacaoCreateSerializer(serializers.ModelSerializer):
         if quantidade <= 0:
             raise serializers.ValidationError('Quantidade solicitada deve ser maior que zero.')
         return quantidade
+
+
+class ItemSaidaSenadoInputSerializer(serializers.Serializer):
+    """
+    Um item do payload opcional `itens_senado` de confirmar-saida — quanto
+    da saída deste item (confirmada nesta mesma chamada) veio do estoque do
+    Senado, não do estoque controlado pela aplicação. Essa fração fica de
+    fora do débito em Material.estoque_real (só o restante é baixado).
+    Validação de que o item pertence à solicitação e de que a quantidade
+    não excede o que está sendo movimentado agora é feita em
+    SolicitacaoService.confirmar_saida (QuantidadeSaidaSenadoInvalidaError).
+    """
+    item = serializers.UUIDField()
+    quantidade = serializers.DecimalField(max_digits=14, decimal_places=3)
+
+    def validate_quantidade(self, valor):
+        if valor <= 0:
+            raise serializers.ValidationError('Quantidade deve ser maior que zero.')
+        return valor
+
+
+class ItemSepararInputSerializer(serializers.Serializer):
+    """Payload da action `separar` de ItemSolicitacaoViewSet."""
+    quantidade = serializers.DecimalField(max_digits=14, decimal_places=3)
+
+    def validate_quantidade(self, valor):
+        if valor <= 0:
+            raise serializers.ValidationError('Quantidade deve ser maior que zero.')
+        return valor
 
 
 class SolicitacaoSerializer(serializers.ModelSerializer):
@@ -114,6 +147,17 @@ class SolicitacaoCreateSerializer(serializers.ModelSerializer):
                 validar_quantidade_por_unidade(item['quantidade_solicitada'], material.unidade)
             except DjangoValidationError as exc:
                 raise serializers.ValidationError(exc.messages)
+
+            # RN nova: item não pode nascer sem estoque suficiente — cobre
+            # tanto material zerado quanto quantidade pedida maior que o
+            # disponível. Sem isso, item só descobria isso em confirmar_saida
+            # (virando INDISPONIVEL); agora é bloqueado na criação.
+            if item['quantidade_solicitada'] > material.estoque_real:
+                raise serializers.ValidationError(
+                    f'Material {material.codigo}: quantidade solicitada '
+                    f'({item["quantidade_solicitada"]}) maior que o estoque disponível '
+                    f'({material.estoque_real}).'
+                )
 
         return itens
 
@@ -174,8 +218,8 @@ class SolicitacaoEditSerializer(serializers.ModelSerializer):
     que já saiu do estoque, e não pode ser removido — o que já saiu não
     tem como "desacontecer" por aqui (RN-006/007, Movimentacao é
     append-only). Aumentar a quantidade de um item já ATENDIDO é
-    permitido: reabre o item pra mais atendimento (mesma regra de status
-    que confirmar_saida usa).
+    permitido: reabre o item pra PENDENTE, passando de novo pela etapa de
+    separação (SolicitacaoService.separar()) antes de nova saída.
     """
     itens = ItemSolicitacaoEditSerializer(many=True)
 
@@ -263,14 +307,16 @@ class SolicitacaoEditSerializer(serializers.ModelSerializer):
                     item_atual.material = item_data['material']
                     item_atual.quantidade_solicitada = item_data['quantidade_solicitada']
                     item_atual.observacao = item_data['observacao']
-                    # mesma regra de status que confirmar_saida usa — aumentar
-                    # a quantidade de um item ATENDIDO o reabre pra DISPONIVEL.
+                    # aumentar a quantidade de um item já ATENDIDO o reabre pra
+                    # PENDENTE (não mais DISPONIVEL) — a etapa de separação
+                    # existe entre a edição e a saída, então a quantidade extra
+                    # também precisa passar por SolicitacaoService.separar().
                     if item_atual.quantidade_atendida <= 0:
                         item_atual.status = ItemSolicitacao.Status.PENDENTE
                     elif item_atual.quantidade_atendida >= item_atual.quantidade_solicitada:
                         item_atual.status = ItemSolicitacao.Status.ATENDIDO
                     else:
-                        item_atual.status = ItemSolicitacao.Status.DISPONIVEL
+                        item_atual.status = ItemSolicitacao.Status.PENDENTE
                     item_atual.save(update_fields=['material', 'quantidade_solicitada', 'observacao', 'status'])
                 else:
                     ItemSolicitacao.objects.create(solicitacao=solicitacao, **item_data)
