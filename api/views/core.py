@@ -32,7 +32,6 @@ class UnidadeMedidaViewSet(viewsets.ModelViewSet):
     serializer_class = UnidadeMedidaSerializer
     permission_classes = [PerfilPermission]
     funcoes_permitidas = {Funcao.ALMOXARIFADO}
-    funcoes_somente_leitura = {Funcao.ALMOXARIFADO}
     search_fields = ['sigla', 'descricao']
 
 
@@ -50,7 +49,6 @@ class FornecedorViewSet(viewsets.ModelViewSet):
     serializer_class = FornecedorSerializer
     permission_classes = [PerfilPermission]
     funcoes_permitidas = {Funcao.ALMOXARIFADO}
-    funcoes_somente_leitura = {Funcao.ALMOXARIFADO}
     search_fields = ['nome', 'cnpj']
 
 
