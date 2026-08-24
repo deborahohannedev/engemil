@@ -11,7 +11,7 @@ from api.views.dashboard import DashboardResumoView
 from api.views.devolucoes import DevolucaoViewSet
 from api.views.entradas import EntradaViewSet
 from api.views.inventario import InventarioViewSet, ItemInventarioViewSet
-from api.views.solicitacoes import SolicitacaoViewSet
+from api.views.solicitacoes import ItemSolicitacaoViewSet, SolicitacaoViewSet
 
 router = DefaultRouter()
 
@@ -26,6 +26,7 @@ router.register('perfis', PerfilViewSet, basename='perfil')
 router.register('movimentacoes', MovimentacaoViewSet, basename='movimentacao')
 
 router.register('solicitacoes', SolicitacaoViewSet, basename='solicitacao')
+router.register('itens-solicitacao', ItemSolicitacaoViewSet, basename='itemsolicitacao')
 router.register('entradas', EntradaViewSet, basename='entrada')
 router.register('devolucoes', DevolucaoViewSet, basename='devolucao')
 router.register('inventarios', InventarioViewSet, basename='inventario')

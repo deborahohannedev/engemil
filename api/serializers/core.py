@@ -133,7 +133,7 @@ class MovimentacaoSerializer(serializers.ModelSerializer):
         model = Movimentacao
         fields = [
             'id', 'material', 'material_codigo', 'material_descricao', 'unidade_sigla', 'solicitacao', 'entrada',
-            'devolucao', 'item_inventario', 'usuario', 'usuario_nome', 'tipo',
+            'devolucao', 'item_inventario', 'usuario', 'usuario_nome', 'tipo', 'responsavel_retirada',
             'quantidade_anterior', 'quantidade_posterior',
             'saldo_anterior', 'saldo_posterior', 'observacao', 'data_movimentacao',
         ]

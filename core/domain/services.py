@@ -50,6 +50,7 @@ class MovimentacaoService:
         usuario: Usuario,
         quantidade_delta: Decimal,
         valor_delta: Decimal,
+        responsavel_retirada: str | None = None,
     ) -> Movimentacao:
         with transaction.atomic():
             material = Material.objects.select_for_update().get(pk=material.pk)
@@ -73,6 +74,7 @@ class MovimentacaoService:
                 saldo_anterior=saldo_anterior,
                 saldo_posterior=saldo_posterior,
                 data_movimentacao=self._agora(),
+                responsavel_retirada=responsavel_retirada,
                 **origem.as_field_kwargs(),
             )
 
@@ -106,11 +108,17 @@ class MovimentacaoService:
 
     def registrar_saida(
         self, solicitacao, itens: list[tuple[Material, Decimal]], usuario: Usuario,
+        responsavel_retirada: str | None = None,
     ) -> list[Movimentacao]:
         """
         itens: lista de (material, quantidade) já validada quanto à
         disponibilidade pela camada de domínio de Solicitacao.
         Todo o loop roda em uma única transação — tudo ou nada.
+
+        responsavel_retirada: nome de quem retirou fisicamente o material —
+        obrigatoriedade validada em SolicitacaoService.confirmar_saida, não
+        aqui (esse service não conhece a regra de negócio, só grava o que
+        recebe).
         """
         movimentacoes = []
         with transaction.atomic():
@@ -123,6 +131,7 @@ class MovimentacaoService:
                     usuario=usuario,
                     quantidade_delta=-quantidade,
                     valor_delta=-(quantidade * custo_unitario),
+                    responsavel_retirada=responsavel_retirada,
                 )
                 movimentacoes.append(mov)
         return movimentacoes

@@ -323,6 +323,12 @@ class Movimentacao(models.Model):
     )
     tipo = models.CharField(max_length=20, choices=Tipo.choices)
 
+    # nome de quem retirou fisicamente o material no posto — não é
+    # necessariamente um Usuario do sistema (diferente de 'usuario' acima,
+    # que é sempre o Almoxarifado que confirmou a saída). Só preenchido em
+    # SAIDA vinda de confirmar_saida de Solicitacao; null nos demais tipos.
+    responsavel_retirada = models.CharField(max_length=150, null=True, blank=True)
+
     quantidade_anterior = models.DecimalField(max_digits=14, decimal_places=3)
     quantidade_posterior = models.DecimalField(max_digits=14, decimal_places=3)
     saldo_anterior = models.DecimalField(max_digits=14, decimal_places=3)

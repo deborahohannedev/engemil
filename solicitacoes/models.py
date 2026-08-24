@@ -9,6 +9,7 @@ class Solicitacao(models.Model):
         # todo: verificar se os status estão corretos, pois o front está usando outros nomes
         ABERTA = 'ABERTA', 'Aberta'
         EM_ANDAMENTO = 'EM_ANDAMENTO', 'Em andamento'
+        DISPONIVEL_PARA_RETIRADA = 'DISPONIVEL_PARA_RETIRADA', 'Disponível para retirada'
         PARCIALMENTE_ATENDIDA = 'PARCIALMENTE_ATENDIDA', 'Parcialmente atendida'
         ATENDIDA = 'ATENDIDA', 'Atendida'
         CANCELADA = 'CANCELADA', 'Cancelada'
@@ -58,6 +59,7 @@ class ItemSolicitacao(models.Model):
     class Status(models.TextChoices):
         # todo: verificar se os status estão corretos, pois o front está usando outros nomes
         PENDENTE = 'PENDENTE', 'Pendente'
+        SEPARADO = 'SEPARADO', 'Separado'
         DISPONIVEL = 'DISPONIVEL', 'Disponível'
         INDISPONIVEL = 'INDISPONIVEL', 'Indisponível'
         ATENDIDO = 'ATENDIDO', 'Atendido'
@@ -71,8 +73,18 @@ class ItemSolicitacao(models.Model):
         'core.Material', on_delete=models.PROTECT, related_name='itens_solicitacao',
     )
     quantidade_solicitada = models.DecimalField(max_digits=14, decimal_places=3)
+    # quanto já foi separado fisicamente do item — controle administrativo da
+    # etapa de separação, acumulado a cada SolicitacaoService.separar(); não
+    # debita Material.estoque_real (isso só acontece em confirmar_saida).
+    quantidade_separada = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     quantidade_atendida = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     quantidade_devolvida = models.DecimalField(max_digits=14, decimal_places=3, default=0)
+    # quanto da saída já confirmada (quantidade_atendida) veio do estoque do
+    # Senado, não do estoque controlado pela aplicação — só
+    # (quantidade_atendida - quantidade_saida_senado) é de fato debitada do
+    # Material.estoque_real via Movimentacao. Acumula junto com
+    # quantidade_atendida a cada confirmar_saida().
+    quantidade_saida_senado = models.DecimalField(max_digits=14, decimal_places=3, default=0)
     status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDENTE)
     observacao = models.TextField(null=True, blank=True)
 
@@ -97,6 +109,22 @@ class ItemSolicitacao(models.Model):
             models.CheckConstraint(
                 check=models.Q(quantidade_devolvida__lte=models.F('quantidade_atendida')),
                 name='ck_item_solicitacao_devolvida_lte_atendida',
+            ),
+            models.CheckConstraint(
+                check=models.Q(quantidade_saida_senado__gte=0),
+                name='ck_item_solicitacao_saida_senado_nao_negativa',
+            ),
+            models.CheckConstraint(
+                check=models.Q(quantidade_saida_senado__lte=models.F('quantidade_atendida')),
+                name='ck_item_solicitacao_saida_senado_lte_atendida',
+            ),
+            models.CheckConstraint(
+                check=models.Q(quantidade_separada__gte=0),
+                name='ck_item_solicitacao_separada_nao_negativa',
+            ),
+            models.CheckConstraint(
+                check=models.Q(quantidade_separada__lte=models.F('quantidade_solicitada')),
+                name='ck_item_solicitacao_separada_lte_solicitada',
             ),
         ]
 

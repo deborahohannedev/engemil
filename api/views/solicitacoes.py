@@ -1,14 +1,19 @@
-from rest_framework import status, viewsets
+from rest_framework import mixins, status, viewsets
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
 from api.permissions import ApenasProprioSolicitante, Funcao, PerfilPermission
 from api.serializers.solicitacoes import (
+    ItemSaidaSenadoInputSerializer, ItemSepararInputSerializer, ItemSolicitacaoSerializer,
     SolicitacaoCreateSerializer, SolicitacaoEditSerializer, SolicitacaoSerializer,
 )
 from core.domain.services import SaldoInsuficienteError
-from solicitacoes.domain.services import DisponibilidadeInsuficienteError, SolicitacaoService
-from solicitacoes.models import Solicitacao
+from solicitacoes.domain.services import (
+    DisponibilidadeInsuficienteError, DisponivelParaRetiradaInvalidaError,
+    QuantidadeSaidaSenadoInvalidaError, ResponsavelRetiradaObrigatorioError,
+    SeparacaoInvalidaError, SolicitacaoService,
+)
+from solicitacoes.models import ItemSolicitacao, Solicitacao
 
 
 class SolicitacaoViewSet(viewsets.ModelViewSet):
@@ -70,10 +75,25 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
             )
 
         solicitacao = self.get_object()
+
+        itens_senado_serializer = ItemSaidaSenadoInputSerializer(
+            data=request.data.get('itens_senado', []), many=True,
+        )
+        itens_senado_serializer.is_valid(raise_exception=True)
+        quantidades_senado = {
+            dados['item']: dados['quantidade'] for dados in itens_senado_serializer.validated_data
+        }
+
         try:
-            self._service.confirmar_saida(solicitacao, usuario=request.user)
+            self._service.confirmar_saida(
+                solicitacao, usuario=request.user,
+                responsavel_retirada=request.data.get('responsavel_retirada'),
+                quantidades_senado=quantidades_senado,
+            )
         except (DisponibilidadeInsuficienteError, SaldoInsuficienteError) as exc:
             return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+        except (QuantidadeSaidaSenadoInvalidaError, ResponsavelRetiradaObrigatorioError) as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
 
         solicitacao.refresh_from_db()
         return Response(SolicitacaoSerializer(solicitacao).data, status=status.HTTP_200_OK)
@@ -84,3 +104,54 @@ class SolicitacaoViewSet(viewsets.ModelViewSet):
         self._service.cancelar(solicitacao)
         solicitacao.refresh_from_db()
         return Response(SolicitacaoSerializer(solicitacao).data)
+
+    @action(detail=True, methods=['post'], url_path='disponivel-para-retirada')
+    def disponivel_para_retirada(self, request, pk=None):
+        if request.user.perfil.funcao not in ({Funcao.ALMOXARIFADO} | Funcao.SEMPRE_PERMITIDOS):
+            return Response(
+                {'detail': 'Apenas o Almoxarifado pode marcar como disponível para retirada.'},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        solicitacao = self.get_object()
+        try:
+            self._service.marcar_disponivel_para_retirada(solicitacao)
+        except DisponivelParaRetiradaInvalidaError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        solicitacao.refresh_from_db()
+        return Response(SolicitacaoSerializer(solicitacao).data)
+
+
+class ItemSolicitacaoViewSet(mixins.RetrieveModelMixin, viewsets.GenericViewSet):
+    """
+    Endpoint dedicado à etapa de separação, item a item (ver
+    SolicitacaoService.separar()). De propósito NÃO é um ModelViewSet — só
+    retrieve + a action `separar`, pra não abrir um caminho de escrita
+    direta em campos como `material`/`quantidade_solicitada` que
+    contornaria as validações de SolicitacaoCreateSerializer/EditSerializer.
+    """
+    queryset = ItemSolicitacao.objects.all()
+    serializer_class = ItemSolicitacaoSerializer
+    permission_classes = [PerfilPermission]
+    funcoes_permitidas = {Funcao.ALMOXARIFADO}
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._service = SolicitacaoService()
+
+    @action(detail=True, methods=['post'])
+    def separar(self, request, pk=None):
+        item = self.get_object()
+        serializer = ItemSepararInputSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        try:
+            self._service.separar(item, serializer.validated_data['quantidade'])
+        except SeparacaoInvalidaError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        except DisponibilidadeInsuficienteError as exc:
+            return Response({'detail': str(exc)}, status=status.HTTP_409_CONFLICT)
+
+        item.refresh_from_db()
+        return Response(ItemSolicitacaoSerializer(item).data)

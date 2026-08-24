@@ -2,11 +2,11 @@
 
 **Projeto:** Engemil — Sistema de Controle de Estoque/Almoxarifado
 **Versão:** MVP — Backend, Frontend e Ambiente de Demonstração
-**Data de atualização:** 17 de agosto de 2026
+**Data de atualização:** 18 de agosto de 2026
 **Responsável pela entrega:** Deborah Ohanne
 **Repositórios:** `engemil` (backend) e `engemil-frontend` (frontend), branches `main`/`develop` em ambos
 
-> Este documento substitui e atualiza o "Status de Desenvolvimento" anterior (13/08/2026), verificado linha a linha contra o estado real do código nos dois repositórios em 17/08/2026, e amplia o conteúdo para servir como documentação técnica completa da aplicação — não só um checklist de status.
+> Este documento substitui e atualiza o "Status de Desenvolvimento" anterior (13/08/2026). A versão de 17/08/2026 foi verificada linha a linha contra o código, mas o commit que a criou (`10a67e6`) ficou **atrás** de 3 commits que já estavam no repositório (edição de Solicitação, fix de encerramento de Inventário, `responsavel_conferencia_nome`) — esta revisão (18/08/2026) reconcilia isso e cobre também os commits do dia seguinte (Reabertura de Solicitação removida, Demanda opcional, saldo total no Dashboard).
 
 ---
 
@@ -71,16 +71,17 @@ O sistema tem controle de acesso por 6 perfis de usuário (só 3 estão com regr
 
 **Backend — Apps de domínio (`solicitacoes`, `entradas`, `devolucoes`, `inventario`)**
 - Todos os 4 apps com `models.py` + `domain/services.py` completos
-- `SolicitacaoService` — `confirmar_saida` (atendimento parcial), `verificar_disponibilidade`, `cancelar`, `reabrir` (novo)
+- `SolicitacaoService` — `separar` (novo, 24/08 — etapa manual item a item, não debita estoque), `marcar_disponivel_para_retirada` (novo, 24/08), `confirmar_saida` (atendimento parcial; só pega itens já `SEPARADO`; aceita `quantidades_senado` opcional — ver "🆕 Novidades" abaixo), `verificar_disponibilidade`, `cancelar`, `reconciliar_status_apos_edicao` (para a edição de cabeçalho/itens, ver seção 6). **`reabrir` foi implementado e depois removido** — ver "🆕 Novidades e 🔥 Removido" logo abaixo
 - `EntradaService` — `confirmar`, protegido contra dupla confirmação (`confirmada_em` + `EntradaJaConfirmadaError`)
-- `DevolucaoService` — `informar`/`aprovar`/`rejeitar`, com bloqueio RN-010 e proteção contra devolução duplicada/saldo insuficiente em duas camadas (novo)
-- `InventarioService` — `iniciar`/`registrar_contagem_fisica`/`encerrar`, reformulado nesta sessão (ver abaixo)
+- `DevolucaoService` — `informar`/`aprovar`/`rejeitar`, com bloqueio RN-010 e proteção contra devolução duplicada/saldo insuficiente em duas camadas
+- `InventarioService` — `iniciar`/`registrar_contagem_fisica`/`encerrar`, reformulado numa sessão anterior; `encerrar()` ganhou proteção contra `SaldoInsuficienteError` (ajuste pendente, ver seção 6)
 
 **Backend — Camada `api/`**
 - `permissions.py` — `PerfilPermission` (com `funcoes_somente_leitura`), `ApenasProprioSolicitante`, `ApenasDevolucaoDoProprioSolicitante` — **matriz de permissões fechada e implementada** para os 4 perfis com regra definida
 - `serializers/` — todos os domínios, padrão leitura + criação separados, `validate()` espelhando os `CheckConstraint` do banco
-- `views/` — todas as actions de negócio, incluindo as novas: `cancelar`, `reabrir` (Solicitação), `laudo` (Inventário, PDF)
-- `urls.py` com `DefaultRouter` + JWT (`auth/token/`, `auth/token/refresh/`)
+- `views/` — todas as actions de negócio: `cancelar`, `confirmar-saida`, `disponivel-para-retirada` (novo, 24/08) (Solicitação), `laudo` (Inventário, PDF); `update`/`partial_update` de Solicitação ganharam suporte a edição de cabeçalho+itens (`SolicitacaoEditSerializer`). Novo `ItemSolicitacaoViewSet` (`/itens-solicitacao/<id>/separar/`, 24/08) — só retrieve + `separar`, de propósito não é `ModelViewSet` completo (evita abrir escrita direta em campos que contornariam as validações de criação/edição)
+- `views/dashboard.py::DashboardResumoView` (**novo**) — `GET /api/dashboard/resumo/`, fora do `DefaultRouter` (não é um recurso CRUD)
+- `urls.py` com `DefaultRouter` + JWT (`auth/token/`, `auth/token/refresh/`) + `dashboard/resumo/`
 - `django-cors-headers`, `django-filter`, paginação configurados
 - **Busca e filtro em praticamente todos os endpoints de listagem** (concluído nesta sessão — ver [seção 8](#8-referência-de-api))
 - `MovimentacaoSerializer` ganhou `usuario_nome`; `select_related` aplicado para evitar N+1
@@ -103,9 +104,10 @@ O sistema tem controle de acesso por 6 perfis de usuário (só 3 estão com regr
 - Layout principal (sidebar + header) com identidade visual do cliente (ver [seção 9](#identidade-visual))
 - 6 telas de listagem com dado real (Materiais, Solicitações, Entradas, Devoluções, Inventário, Movimentações), todas com busca/filtro
 - Formulários de criação com `Form.List` de itens dinâmicos (Solicitação, Entrada)
-- Actions de negócio completas: Confirmar Saída, Cancelar e Reabrir Solicitação; Confirmar Entrada (com modal de conferência); Informar, Aprovar e Rejeitar Devolução; Iniciar, contar e Encerrar Inventário; download de laudo em PDF
+- Actions de negócio completas: Confirmar Saída, Cancelar e **Editar** Solicitação (cabeçalho + itens, novo); Confirmar Entrada (com modal de conferência); Informar, Aprovar e Rejeitar Devolução, com tela de detalhes mostrando o motivo de rejeição em destaque (novo); Iniciar, contar e Encerrar Inventário (encerrar com item não contado restrito a Engenheiro/Administrador no front, espelhando o backend); download de laudo em PDF
 - Cadastros completos (listar/criar/editar): Unidade de Medida, Fornecedor, Posto, Demanda, Perfil, Usuário (+ resetar senha)
-- Dashboard inicial com 5 indicadores resumidos
+- Dashboard inicial com indicadores resumidos + **saldo total em estoque** (novo: saldo do estoque atual + saldo das solicitações atendidas, `GET /api/dashboard/resumo/`)
+- Tela de contagem do Inventário oculta a coluna "Qtd. Sistema" para o perfil Almoxarifado (quem faz a contagem física), para não influenciar a contagem manual — Engenheiro/Administrador continuam vendo
 - Componente `NumeroTabela` (fonte monoespaçada) aplicado nas colunas numéricas
 - Tratamento de erro robusto (`extrairMensagemErro`, com guard contra resposta HTML não-JSON)
 
@@ -117,10 +119,24 @@ O sistema tem controle de acesso por 6 perfis de usuário (só 3 estão com regr
 - Versão do Python fixada via `.python-version` (padrão correto do Render)
 - JWT com validade estendida (8h access / 7 dias refresh) para não expirar durante demonstrações
 
-### 🔧 Corrigido nesta sessão (bugs reais)
+### 🆕 Novidades e 🔥 Removido (17-18/08/2026 e 24/08/2026)
+
+- **Fluxo de separação da Solicitação (novo, 24/08)**: dois passos manuais novos antes da saída física. (1) `SolicitacaoService.separar()` — Almoxarifado informa, item a item, quanto já separou fisicamente (`ItemSolicitacao.quantidade_separada`, acumula, aceita parcial); revalida disponibilidade a cada chamada; item vira `SEPARADO` só quando `quantidade_separada >= quantidade_solicitada`; NÃO debita `Material.estoque_real`. (2) Quando todo item não cancelado está `SEPARADO`, `POST /solicitacoes/<id>/disponivel-para-retirada/` muda `Solicitacao.status` pra `DISPONIVEL_PARA_RETIRADA` — nada disso é automático. `confirmar-saida` (inalterado por dentro) passou a operar só sobre itens `SEPARADO`, e seu botão no frontend só aparece em `DISPONIVEL_PARA_RETIRADA`/`PARCIALMENTE_ATENDIDA`. Criação de Solicitação também mudou: item com `quantidade_solicitada > Material.estoque_real` é bloqueado na hora (`SolicitacaoCreateSerializer`) — não nasce mais `INDISPONIVEL` por erro de cadastro, só por corrida real de estoque depois. Ver [seção 6](#6-regras-de-negócio-críticas) e [seção 8](#8-referência-de-api)
+- **Saída via estoque do Senado (novo, 24/08)**: `ItemSolicitacao.quantidade_saida_senado` — quanto da saída confirmada veio do estoque do Senado, não do estoque controlado pela aplicação. `quantidade_atendida` continua refletindo o total entregue; só `quantidade_atendida - quantidade_saida_senado` é de fato debitado do `Material.estoque_real` (via `Movimentacao`, quantidade menor, sem tabela nova). Payload opcional `itens_senado` em `POST /confirmar-saida/` — ver [seção 6](#6-regras-de-negócio-críticas) e [seção 8](#8-referência-de-api)
+- **Responsável pela retirada (novo, 24/08)**: `Movimentacao.responsavel_retirada` (nullable no model, obrigatório no fluxo) — nome de quem retira fisicamente o material, informado em `confirmar-saida`, gravado em cada `Movimentacao` de `SAIDA` gerada naquela chamada (não em `Solicitacao` — de propósito, pra não perder o nome de confirmações parciais anteriores quando a retirada é dividida entre pessoas diferentes). Exposto em `MovimentacaoSerializer` e na tela de Movimentações
+- **Almoxarifado cadastra Unidade de Medida e Fornecedor (novo, 24/08)**: `UnidadeMedidaViewSet`/`FornecedorViewSet` tinham `funcoes_somente_leitura = {ALMOXARIFADO}` residual — travava em leitura mesmo já estando em `funcoes_permitidas`. Removido dos dois (bug, não decisão — Posto/Demanda/ReferenciaTecnica/Perfil/Usuário continuam como estavam, intocados). Frontend: menu "Cadastros" deixou de ser um bloco único (`acessoPorFuncao.cadastros`) — cada item agora tem acesso individual (`unidadesMedida`/`fornecedores`/`postos`/`perfis`/`usuarios`), então o Almoxarifado só vê os 2 itens liberados
+- **Edição de Solicitação (novo)**: `PATCH`/`PUT /api/solicitacoes/<id>/`, cabeçalho + itens, só em status editáveis — ver [seção 6](#6-regras-de-negócio-críticas)
+- **Reabertura de Solicitação — implementada e removida**: chegou a existir, foi revertida por deixar itens e cabeçalho dessincronizados; a Edição acima cobre a necessidade. Sem status `REABERTA`, sem `reaberta_em`
+- **Dashboard — saldo total em estoque (novo)**: `GET /api/dashboard/resumo/`
+- **Demanda virou opcional** na Solicitação (contexto tirado de uso por enquanto)
+- **`responsavel_conferencia_nome` exposto** no serializer de Devolução
+- **Frontend**: tela de detalhes da Devolução com motivo de rejeição em destaque; coluna "Qtd. Sistema" do Inventário oculta para o Almoxarifado (evita influenciar a contagem manual); paleta de cores do cliente commitada (pendência anterior resolvida)
+
+### 🔧 Corrigido (bugs reais)
 
 | Bug | Causa | Correção |
 |---|---|---|
+| Encerrar Inventário podia quebrar com `SaldoInsuficienteError` cru | `encerrar()` calculava o ajuste contra o retrato do início do inventário sem revalidar o saldo atual do material | Item cujo ajuste não coube mais fica marcado como pendente na `observacao` (visível no laudo), resto do encerramento segue normal |
 | Aprovar devolução podia estourar `500` cru | `aprovar()` não revalidava saldo disponível — uma segunda devolução do mesmo item podia violar constraint do banco | `SaldoDevolucaoInsuficienteError` validado também em `aprovar()`, não só na criação |
 | Duas devoluções pendentes do mesmo item ao mesmo tempo | Nenhuma trava de concorrência | `DevolucaoJaAbertaError` — só uma devolução em aberto por item por vez |
 | Erro genérico `"<"` no frontend em respostas não-JSON | Resposta HTML de erro sendo iterada como objeto | Guard `typeof dados !== 'object'` em `extrairMensagemErro` |
@@ -128,10 +144,10 @@ O sistema tem controle de acesso por 6 perfis de usuário (só 3 estão com regr
 | `loading` acendia em todas as linhas da tabela ao salvar uma contagem | `mutation.isPending` sozinho não distingue qual item está sendo salvo | Comparação por ID do item em processamento |
 | Código de material longo atropelava coluna no PDF do laudo | Texto simples não quebra linha em `Table` do reportlab | Texto envolvido em `Paragraph` |
 
-### 📌 Estado do git (17/08/2026)
+### 📌 Estado do git (18/08/2026)
 
-- **Backend**: `develop` sincronizado com `origin/develop` (nada pendente de push). 3 commits em `develop` ainda não mesclados em `main`.
-- **Frontend**: `develop` sincronizado com `origin/develop`. 18 commits em `develop` ainda não mesclados em `main`. Há alterações **não commitadas** localmente: nova paleta de cores do cliente (`theme.ts` + remoção de hex hardcoded em ~10 páginas) — ver [seção 9](#identidade-visual).
+- **Backend**: `develop` sincronizado com `origin/develop` (nada pendente de push). 10 commits em `develop` ainda não mesclados em `main`.
+- **Frontend**: `develop` sincronizado com `origin/develop` (nada pendente de push, nada não commitado). 26 commits em `develop` ainda não mesclados em `main`. A paleta de cores do cliente (ver [seção 9](#identidade-visual)) **já está commitada** — pendência anterior resolvida.
 - O ambiente de demonstração no Render normalmente reflete `main`; portanto o deploy público pode estar **atrás** do que está em `develop` até o próximo merge — checar antes de apresentar ao cliente.
 
 ---
@@ -260,14 +276,14 @@ engemil-frontend/
 | `Fornecedor` | `nome`, `cnpj` (único), `telefone`, `email` | Validação de CNPJ ainda **não implementada** (só formato) |
 | `Demanda` | `numero` (único), `descricao`, `origem`, `prazo`, `situacao` | |
 | `Material` | `codigo` (único), `descricao` (único campo que nomeia o item), `unidade` (FK), `estoque_minimo` (opcional), `valor_unitario` (preço cadastral, opcional), `estoque_real` (materializado, somente leitura), `situacao` | `estoque_real` é mantido **só** por `MovimentacaoService`. Falta `categoria`/`localizacao` (pendência de negócio) |
-| `Movimentacao` | `material` (FK), 4 FKs de origem (`solicitacao`/`entrada`/`devolucao`/`item_inventario`, todas nullable, **exatamente 1 preenchida**), `usuario`, `tipo`, `quantidade_anterior/posterior` (unidades físicas), `saldo_anterior/posterior` (R$) | Tabela-fato de auditoria, append-only. Regra de origem única validada em Python (`OrigemMovimentacao`) **e** `CheckConstraint` no banco |
+| `Movimentacao` | `material` (FK), 4 FKs de origem (`solicitacao`/`entrada`/`devolucao`/`item_inventario`, todas nullable, **exatamente 1 preenchida**), `usuario`, `responsavel_retirada` (novo, 24/08), `tipo`, `quantidade_anterior/posterior` (unidades físicas), `saldo_anterior/posterior` (R$) | Tabela-fato de auditoria, append-only. Regra de origem única validada em Python (`OrigemMovimentacao`) **e** `CheckConstraint` no banco. `responsavel_retirada` (nullable) é o nome de quem retirou fisicamente o material — não é um `Usuario` do sistema (diferente de `usuario`, que é sempre o Almoxarifado que confirmou); só preenchido em `SAIDA` vinda de `confirmar_saida`, obrigatório nesse fluxo |
 
 ### `solicitacoes`
 
 | Entidade | Campos-chave | Observações |
 |---|---|---|
-| `Solicitacao` | `numero` (único), `status` (5 estados), `data_solicitacao`, `data_prevista` (opcional, auto-preenchida), `demanda`/`posto`/`solicitante` (FK), `reaberta_em` (nullable) | Status: `ABERTA`, `EM_ANDAMENTO`, `PARCIALMENTE_ATENDIDA`, `ATENDIDA`, `CANCELADA` — não existe status `REABERTA` (decisão consciente) |
-| `ItemSolicitacao` | `solicitacao`/`material` (FK, único juntos), `quantidade_solicitada`, `quantidade_atendida`, `quantidade_devolvida`, `status`, `observacao` (obrigatória na criação via API) | Status: `PENDENTE`, `DISPONIVEL`, `INDISPONIVEL`, `ATENDIDO`, `CANCELADO`. Quantidades atendida/devolvida são campos derivados, nunca fonte de verdade |
+| `Solicitacao` | `numero` (único), `status` (6 estados), `data_solicitacao`, `data_prevista` (opcional, auto-preenchida), `demanda` (FK, **opcional**), `posto`/`solicitante` (FK) | Status: `ABERTA`, `EM_ANDAMENTO`, `DISPONIVEL_PARA_RETIRADA` (novo, 24/08 — todo item não cancelado já `SEPARADO`), `PARCIALMENTE_ATENDIDA`, `ATENDIDA`, `CANCELADA` — não existe status `REABERTA`. A feature de reabrir foi implementada e depois **removida** (campo `reaberta_em` também removido) — ver seção 6 |
+| `ItemSolicitacao` | `solicitacao`/`material` (FK, único juntos), `quantidade_solicitada`, `quantidade_separada`, `quantidade_atendida`, `quantidade_devolvida`, `quantidade_saida_senado`, `status`, `observacao` (obrigatória na criação via API) | Status: `PENDENTE`, `SEPARADO` (novo, 24/08), `DISPONIVEL`, `INDISPONIVEL`, `ATENDIDO`, `CANCELADO`. Quantidades separada/atendida/devolvida/saída-senado são campos derivados, nunca fonte de verdade. `quantidade_separada` acumula via `SolicitacaoService.separar()` (etapa manual, não debita estoque); item só vira `SEPARADO` quando `quantidade_separada >= quantidade_solicitada`. `quantidade_saida_senado` (sempre `<= quantidade_atendida`) é a fração da saída que veio do estoque do Senado — só `quantidade_atendida - quantidade_saida_senado` é debitado do `Material.estoque_real` |
 
 ### `entradas`
 
@@ -280,7 +296,7 @@ engemil-frontend/
 
 | Entidade | Campos-chave | Observações |
 |---|---|---|
-| `Devolucao` | `item_solicitacao` (FK), `responsavel_conferencia` (FK), `quantidade`, `condicao` (bool), `decisao` (bool), `data_inicial`, `data_final` (nullable) | Estado de 3 posições sem enum: `data_final IS NULL` = pendente; `decisao` só vale depois de `data_final` preenchido |
+| `Devolucao` | `item_solicitacao` (FK), `responsavel_conferencia` (FK), `quantidade`, `condicao` (bool), `decisao` (bool), `data_inicial`, `data_final` (nullable) | Estado de 3 posições sem enum: `data_final IS NULL` = pendente; `decisao` só vale depois de `data_final` preenchido. `DevolucaoSerializer` expõe `responsavel_conferencia_nome` (read-only) |
 
 ### `inventario`
 
@@ -346,7 +362,8 @@ erDiagram
 | Devoluções | ver+criar+editar (todas) | ver+criar+editar (todas) | ver+criar+editar — **só ligadas às solicitações dele** |
 | Inventário | ver+criar+editar | ver+criar+editar (todas) | ❌ sem acesso |
 | Movimentações | ver (todas, só leitura) | ver (todas, só leitura) | ver (só leitura) — **só SAÍDA/DEVOLUÇÃO originadas dele** |
-| Cadastros (Fornecedor/Posto/Demanda/UnidadeMedida/ReferenciaTecnica/Perfil/Usuário) | ver+criar+editar | ❌ sem acesso à aba; **leitura liberada** nos recursos que suas telas precisam | ❌ sem acesso à aba; leitura liberada só em Demanda+Posto |
+| Cadastros — UnidadeMedida/Fornecedor (24/08) | ver+criar+editar | **ver+criar+editar** (mesma aba "Cadastros" do menu, só esses 2 itens aparecem) | ❌ sem acesso à aba |
+| Cadastros — Posto/Demanda/ReferenciaTecnica/Perfil/Usuário | ver+criar+editar | ❌ sem acesso à aba; **leitura liberada** nos recursos que suas telas precisam (Posto, Demanda) | ❌ sem acesso à aba; leitura liberada só em Demanda+Posto |
 
 Implementado em `api/permissions.py` e espelhado no frontend em `src/access/acessoPorFuncao.ts` (mesma fonte de verdade para menu e bloqueio de rota).
 
@@ -363,12 +380,21 @@ Implementado em `api/permissions.py` e espelhado no frontend em `src/access/aces
 | **RN-010** | Material danificado nunca retorna ao estoque | `DevolucaoService.aprovar()` levanta `MaterialDanificadoNaoRetornaAoEstoqueError` se `condicao=False`; único caminho é `rejeitar()` |
 | **RN-011** | Não pode sair mais que o saldo disponível | `MovimentacaoService` levanta `SaldoInsuficienteError`; checagem em unidades físicas, não em R$ |
 | Atendimento parcial | Item sem estoque fica `INDISPONIVEL` sem bloquear os demais itens da solicitação | `confirmar_saida()` processa item a item, atômico só para o lote elegível |
+| Separação antes da saída | `confirmar_saida()` só pega itens já `SEPARADO` — `PENDENTE` nunca entra, mesmo com estoque disponível | Filtro `status=SEPARADO` em `confirmar_saida()` |
+| Separação parcial e revalidação | `separar()` aceita quantidade menor que a solicitada (acumula); revalida disponibilidade a cada chamada — pode ter mudado desde a criação | `SeparacaoInvalidaError` (`400`, quantidade/estado inválido), `DisponibilidadeInsuficienteError` (`409`, sem estoque) |
+| Disponível para retirada exige tudo separado | Só marca `DISPONIVEL_PARA_RETIRADA` se todo item não cancelado estiver `SEPARADO` | `DisponivelParaRetiradaInvalidaError` (`409`) |
+| Item não nasce sem estoque | Criação bloqueia item com `quantidade_solicitada > Material.estoque_real` (cobre estoque zerado também) | `SolicitacaoCreateSerializer.validate_itens` (`400`) |
 | Confirmação de Entrada protegida | Confirmar duas vezes não duplica movimentação | `confirmada_em` (nullable) + `EntradaJaConfirmadaError` (`409`) |
 | Quantidade inteira por unidade contável | `un`/`pct`/`cx` só aceitam inteiro; `m`/`m2`/`m3`/`cm2`/`cm3`/`kg` aceitam fração | `validar_quantidade_por_unidade`, aplicado em todo serializer que recebe quantidade ligada a material. **Gap conhecido**: Django Admin não passa pelos serializers, então não valida isso |
 | Custeio de saída — placeholder | `MovimentacaoService._custo_unitario_estimado()` usa "custo da última entrada" — **não é** CMP nem FIFO, decisão pendente do cliente | Isolado num único método para facilitar troca futura. Não confundir com `Material.valor_unitario` (preço cadastral, para exibição, sem relação com custeio) |
 | Só uma devolução pendente por item | Nova devolução recusada se já existe uma com `data_final IS NULL` | `DevolucaoJaAbertaError` (`400`) |
 | Quantidade devolvida ≤ disponível | `disponível = quantidade_atendida - quantidade_devolvida`, recalculado no submit, validado em **duas** pontas (`informar()` e `aprovar()`) | `SaldoDevolucaoInsuficienteError` (`409`) |
-| Reabertura de Solicitação | Só `ATENDIDA` pode ser reaberta; volta para `ABERTA` (sem status `REABERTA` novo), grava `reaberta_em` | `SolicitacaoService.reabrir()`; `SolicitacaoNaoPodeSerReabertaError` (`409`) senão |
+| Edição de Solicitação | Só `ABERTA`/`EM_ANDAMENTO`/`PARCIALMENTE_ATENDIDA`; item com `quantidade_atendida > 0` não troca material, não reduz abaixo do atendido, não é removido | `SolicitacaoEditSerializer` (`PATCH`/`PUT /solicitacoes/<id>/`) |
+| ~~Reabertura de Solicitação~~ | **Removida** (implementada e depois revertida) — deixava itens `ATENDIDO` dessincronizados do cabeçalho voltado a `ABERTA`; a Edição de Solicitação acima cobre a necessidade real | — |
+| Ajuste de Inventário não coube no saldo atual | `quantidade_sistema` é retrato do início do inventário; se o saldo real mudou, o ajuste calculado pode violar `SaldoInsuficienteError` na hora de encerrar | Item fica com ajuste pendente na `observacao` (não derruba o encerramento); resposta ganha `aviso` |
+| Encerrar Inventário com item não contado | Só Engenheiro/Administrador pode substituir a contagem física pela quantidade do sistema; Almoxarifado precisa de 100% contado manualmente | `403` na view se Almoxarifado tentar com item pendente |
+| Saída via estoque do Senado | `quantidade_saida_senado` (opcional, por item, em `confirmar-saida`) nunca pode exceder a quantidade pendente do item nesta chamada, nem ser informada para item fora do lote elegível desta confirmação. A fração Senado não é debitada do `Material.estoque_real` — só `quantidade_pendente - quantidade_saida_senado` sai de fato (inclusive na checagem de disponibilidade); pode chegar a `0` (saída 100% coberta pelo Senado) | `QuantidadeSaidaSenadoInvalidaError` (`400`) |
+| Responsável pela retirada obrigatório | `confirmar-saida` exige `responsavel_retirada` (nome de quem retira fisicamente, não precisa ser `Usuario` do sistema) — grava em `Movimentacao.responsavel_retirada` pra cada item confirmado nesta chamada | `ResponsavelRetiradaObrigatorioError` (`400`) |
 
 ---
 
@@ -399,7 +425,7 @@ flowchart TD
     H --> I["Material.estoque_real += quantidade"]
 ```
 
-### Solicitação → Saída (criar, confirmar, cancelar, reabrir)
+### Solicitação → Saída (criar, confirmar, cancelar, editar)
 
 ```mermaid
 flowchart TD
@@ -417,9 +443,13 @@ flowchart TD
     H -->|nenhum ainda| H3[EM_ANDAMENTO]
     C --> K["Dono ou Almoxarifado\nPOST /cancelar/"]
     K --> K1["Solicitacao → CANCELADA"]
-    H1 --> R["POST /reabrir/"]
-    R -->|status ATENDIDA| R3["status → ABERTA\nreaberta_em = agora"]
+    H2 --> ED["PATCH/PUT /solicitacoes/id/\n(NOVO — não em ATENDIDA/CANCELADA)"]
+    H3 --> ED
+    ED -->|"item já com saída"| ED1["não troca material,\nnão reduz, não remove"]
+    ED --> ED2["reconciliar_status_apos_edicao()\n— não força avanço de ciclo sozinha"]
 ```
+
+> **Reabertura removida** (18/08/2026): existiu `POST /reabrir/` + `Solicitacao.reaberta_em`, mas foi revertida por deixar itens `ATENDIDO` dessincronizados do cabeçalho — a Edição de Solicitação acima resolve a necessidade sem essa inconsistência.
 
 ### Devolução
 
@@ -448,15 +478,21 @@ flowchart TD
     B --> C["1 ItemInventario por material\nsnapshot do saldo no momento"]
     C --> D["Contagem física item a item"]
     D --> F["POST /encerrar/"]
-    F --> G{item foi contado?}
+    F --> P{"item não contado\ne quem encerra não é\nEngenheiro/Admin?"}
+    P -->|sim| P1["403"]
+    P -->|não| G{item foi contado?}
     G -->|não| G1["quantidade_fisica = quantidade_sistema\ndivergência 0"]
     G -->|sim| G2["usa valor contado"]
     G1 --> H{divergência != 0?}
     G2 --> H
-    H -->|sim| H1["Movimentacao AJUSTE_INVENTARIO"]
+    H -->|sim| H1{"ajuste cabe no\nsaldo atual?"}
     H -->|não| H2["sem ajuste"]
-    H1 --> I["situacao → ENCERRADO"]
+    H1 -->|sim| H1A["Movimentacao AJUSTE_INVENTARIO"]
+    H1 -->|"não — SaldoInsuficienteError"| H1B["ajuste pendente\nna observação do item"]
+    H1A --> I["situacao → ENCERRADO"]
+    H1B --> I
     H2 --> I
+    I -->|"algum item pendente"| IA["resposta ganha 'aviso'"]
     C --> L["GET /laudo/\nqualquer situação"]
     I --> L
     L --> M["PDF via reportlab"]
@@ -504,22 +540,27 @@ Todos suportam `GET` (list/retrieve), `POST`, `PATCH`, `DELETE` conforme a permi
 | POST | `/usuarios/<id>/resetar-senha/` | Admin/Engenheiro gera nova senha temporária para outro usuário |
 | POST | `/entradas/<id>/confirmar/` | Confirma entrada, gera `Movimentacao` |
 | GET | `/solicitacoes/<id>/disponibilidade/` | Verifica disponibilidade de estoque dos itens |
-| POST | `/solicitacoes/<id>/confirmar-saida/` | Confirma saída (atendimento total ou parcial) |
-| POST | `/solicitacoes/<id>/cancelar/` | Cancela solicitação (`ABERTA`/`EM_ANDAMENTO`/`PARCIALMENTE_ATENDIDA`) |
-| POST | `/solicitacoes/<id>/reabrir/` | Reabre solicitação `ATENDIDA` |
+| POST | `/itens-solicitacao/<id>/separar/` | (novo, 24/08) Registra separação física do item, `{"quantidade": "3.000"}` — acumula em `quantidade_separada`, aceita parcial, revalida estoque; `400` `SeparacaoInvalidaError` / `409` `DisponibilidadeInsuficienteError` |
+| POST | `/solicitacoes/<id>/disponivel-para-retirada/` | (novo, 24/08) Marca a solicitação como `DISPONIVEL_PARA_RETIRADA` — exige todo item não cancelado já `SEPARADO`; `409` `DisponivelParaRetiradaInvalidaError` |
+| POST | `/solicitacoes/<id>/confirmar-saida/` | Confirma saída (atendimento total ou parcial) — só sobre itens já `SEPARADO`. Body: `responsavel_retirada` (obrigatório, string — nome de quem retira, grava em `Movimentacao.responsavel_retirada`; `400` se ausente/em branco) + `itens_senado` opcional `[{"item": "<uuid>", "quantidade": "3.000"}]` — informa quanto da saída de cada item veio do estoque do Senado; essa fração acumula em `quantidade_saida_senado` e NÃO é debitada de `Material.estoque_real` (`400` se quantidade > pendente do item ou item fora do lote desta chamada) |
+| POST | `/solicitacoes/<id>/cancelar/` | Cancela solicitação (`ABERTA`/`EM_ANDAMENTO`/`PARCIALMENTE_ATENDIDA`/`DISPONIVEL_PARA_RETIRADA`) |
+| PATCH/PUT | `/solicitacoes/<id>/` | Edita cabeçalho + itens (`ABERTA`/`EM_ANDAMENTO`/`PARCIALMENTE_ATENDIDA` só — `DISPONIVEL_PARA_RETIRADA` NÃO é editável) — via `update`/`partial_update` padrão do `ModelViewSet`, não é uma `@action` separada. Item reaberto (quantidade aumentada após `ATENDIDO`) volta pra `PENDENTE`, não mais `DISPONIVEL` — precisa passar de novo pela separação |
 | POST | `/devolucoes/<id>/aprovar/` | Aprova devolução, gera `Movimentacao` (se em condição de uso) |
 | POST | `/devolucoes/<id>/rejeitar/` | Rejeita devolução, nunca gera `Movimentacao` |
 | POST | `/inventarios/<id>/participantes/` | Adiciona participante ao inventário |
-| POST | `/inventarios/<id>/encerrar/` | Encerra inventário, gera ajustes de divergência |
+| POST | `/inventarios/<id>/encerrar/` | Encerra inventário; item não contado só é auto-preenchido se quem encerra for Engenheiro/Administrador; item com ajuste que não coube no saldo atual fica pendente (`aviso` na resposta) |
 | GET | `/inventarios/<id>/laudo/` | Gera e baixa laudo em PDF |
 | POST | `/itens-inventario/<id>/contagem-fisica/` | Registra contagem física de um item |
+| GET | `/dashboard/resumo/` | `saldo_estoque`, `saldo_solicitacoes_atendidas`, `saldo_total` (fora do `DefaultRouter`) |
+
+> **`POST /solicitacoes/<id>/reabrir/` foi removido** (existiu, revertido em 18/08/2026) — não usar mais em integrações ou testes manuais.
 
 ### Filtros de busca implementados
 
 | Endpoint | Parâmetros |
 |---|---|
 | `materiais` | `?search=` (código/descrição/fabricante), `?situacao=`, `?unidade=` |
-| `solicitacoes` | `?search=` (número), `?status=`, `?posto=`, `?demanda=` |
+| `solicitacoes` | `?search=` (número), `?status=`, `?posto=` (filtro `?demanda=` removido junto com a demanda virar opcional) |
 | `entradas` | `?search=` (nota fiscal), `?fornecedor=`, `?confirmada=true\|false` |
 | `devolucoes` | `?search=` (código/descrição do material), `?pendente=true\|false`, `?condicao=` |
 | `inventarios` | `?situacao=` |
@@ -571,7 +612,7 @@ Quatro camadas de guarda: `ProtectedRoute` (está logado?) → `RequireSenhaAtua
 - Fundo: branco quente `#FAF9F6`
 - Tipografia: IBM Plex Sans (títulos/menu), IBM Plex Mono (colunas numéricas via `NumeroTabela`)
 
-> **Nesta sessão**: a migração da paleta antiga (cobre `#B87333`/grafite) para a paleta oficial do cliente está feita no código (`theme.ts` + ~10 páginas que tinham hex hardcoded), mas **ainda não commitada** no frontend — ver [seção 2](#2-status-de-desenvolvimento). Regra de arquitetura reforçada: nenhuma cor de marca pode ser hardcoded fora de `theme.ts`.
+> A migração da paleta antiga (cobre `#B87333`/grafite) para a paleta oficial do cliente (`theme.ts` + páginas que tinham hex hardcoded) **já está commitada** no frontend (`:lipstick: aplica paleta oficial do cliente`, 17/08/2026) — pendência resolvida. Regra de arquitetura reforçada: nenhuma cor de marca pode ser hardcoded fora de `theme.ts`.
 
 ---
 
@@ -599,19 +640,17 @@ Em ordem sugerida de prioridade:
 
 1. **Reverter o limite temporário de 10 materiais no Inventário** assim que a otimização de performance abaixo for feita — a regra combinada com o cliente é TODOS os materiais ativos (`InventarioService.LIMITE_TEMPORARIO_DEMO`)
 2. **Performance geral do Inventário** — com ~979 materiais ativos por inventário, três frentes precisam de correção: paginar a listagem (não embutir `itens` completo só para contar "X/Y contados"), reduzir o payload do modal de detalhes, e paginar a tabela de contagem no frontend (hoje monta ~979 `InputNumber` simultâneos, causa de lentidão ao digitar)
-3. **Commitar a nova paleta de cores** do frontend (já implementada localmente)
-4. Tela de Usuário no frontend com CRUD completo (hoje só leitura, usada em Select)
-5. Refresh automático de token JWT no frontend (interceptor de 401 usando o `refresh_token`)
-6. Validação de CNPJ no cadastro de Fornecedor (dígito verificador, mesmo padrão do CPF)
-7. Decidir se o padrão "modal de detalhes antes de confirmar" (hoje só em Entrada) deve se estender para `confirmar-saida` de Solicitação e `aprovar`/`rejeitar` de Devolução
-8. Rastrear "quem confirmou e quando" separadamente de "quem criou" em todas as ações de confirmação (hoje só Inventário faz isso)
-9. `admin.py` para os apps `solicitacoes`, `entradas`, `devolucoes`, `inventario` (hoje só `core` está registrado)
-10. Fechar gap de segurança de baixo risco: `PATCH` numa `Devolucao` própria do Encarregado ainda permite trocar `item_solicitacao` sem revalidar propriedade (só valida na criação)
-11. Decidir se `seed_demo` deve continuar rodando em todo deploy (idempotente, mas roda a cada build) ou virar comando manual só para ambientes novos
-12. Botão "Editar Solicitação" — pendente de definição de negócio (o que conta como "editável", se inclui itens ou só cabeçalho)
-13. **Testes automatizados** — nenhum foi escrito ainda, backend ou frontend. Priorizar: RN-010, saldo insuficiente, exclusividade de origem em `Movimentacao`, `EntradaJaConfirmadaError`, escopo individual do Encarregado, `DevolucaoJaAbertaError`/`SaldoDevolucaoInsuficienteError`
-14. Dockerizar a aplicação completa (Django + Postgres) — adiado conscientemente
-15. Revisar settings de produção (`SECURE_SSL_REDIRECT`/HSTS etc.) se o domínio final não for mais `*.onrender.com`
+3. Tela de Usuário no frontend com CRUD completo (hoje só leitura, usada em Select)
+4. Refresh automático de token JWT no frontend (interceptor de 401 usando o `refresh_token`)
+5. Validação de CNPJ no cadastro de Fornecedor (dígito verificador, mesmo padrão do CPF)
+6. Decidir se o padrão "modal de detalhes antes de confirmar" (hoje só em Entrada) deve se estender para `confirmar-saida` de Solicitação e `aprovar`/`rejeitar` de Devolução
+7. Rastrear "quem confirmou e quando" separadamente de "quem criou" em todas as ações de confirmação (hoje só Inventário faz isso)
+8. `admin.py` para os apps `solicitacoes`, `entradas`, `devolucoes`, `inventario` (hoje só `core` está registrado)
+9. Fechar gap de segurança de baixo risco: `PATCH` numa `Devolucao` própria do Encarregado ainda permite trocar `item_solicitacao` sem revalidar propriedade (só valida na criação)
+10. Decidir se `seed_demo` deve continuar rodando em todo deploy (idempotente, mas roda a cada build) ou virar comando manual só para ambientes novos
+11. **Testes automatizados** — nenhum foi escrito ainda, backend ou frontend. Priorizar: RN-010, saldo insuficiente, exclusividade de origem em `Movimentacao`, `EntradaJaConfirmadaError`, escopo individual do Encarregado, `DevolucaoJaAbertaError`/`SaldoDevolucaoInsuficienteError`, edição de Solicitação, ajuste pendente de Inventário
+12. Dockerizar a aplicação completa (Django + Postgres) — adiado conscientemente
+13. Revisar settings de produção (`SECURE_SSL_REDIRECT`/HSTS etc.) se o domínio final não for mais `*.onrender.com`
 
 ---
 
@@ -635,8 +674,10 @@ Lista completa em `PENDENCIAS_CONSOLIDADAS.md` do projeto (27 itens). Pontos mai
 | Solicitação sem campo `prioridade` (RF-008, DEC-01) | `solicitacoes/models.py` |
 | Falta 5º tipo de origem em `Movimentacao` para "Ajuste" manual avulso (RF-018/UC-07) | `core/models.py — Movimentacao` (estrutural) |
 | Entidades `CompraPendente` e `Contrato` não modeladas | Modelo conceitual — seção 12 do documento v1.1 |
-| Encerramento de inventário exige 100% dos itens contados — **decidido**: não exige mais, item não contado auto-preenche | `inventario/domain/services.py` |
+| Encerramento de inventário exige 100% dos itens contados — **decidido**: só quando Engenheiro/Administrador encerra; Almoxarifado ainda precisa de 100% contado manualmente | `inventario/domain/services.py` |
 | Todo item com divergência gera ajuste automático — deveria ter aprovação item a item? | `inventario/domain/services.py` |
+| Reabertura de Solicitação — **decidido e revertido**: chegou a existir, foi removida por deixar itens/cabeçalho dessincronizados; Edição de Solicitação cobre a necessidade | `solicitacoes/domain/services.py` |
+| Contexto de Demanda "tirado de uso por enquanto" — `Solicitacao.demanda` virou opcional; decisão final (manter opcional, tornar obrigatória de novo, ou remover de vez) ainda em aberto | `solicitacoes/models.py` |
 | `ADMINISTRADOR`/`ENGENHEIRO` com acesso irrestrito a qualquer endpoint — confirmar se é o esperado | `api/permissions.py` |
 | Encarregado restrito ao posto de lotação (não de responsabilidade) — **confirmado**: escopo é individual, não por posto | `api/permissions.py` |
 | Perfis `COMPRAS` e `CONSULTA` sem mapeamento de acesso definido | `api/permissions.py` |
@@ -656,7 +697,9 @@ Lista completa em `PENDENCIAS_CONSOLIDADAS.md` do projeto (27 itens). Pontos mai
 - Identidade visual: paleta oficial do cliente (`#333333` cinza-escuro + `#581538` vinho), definida por Gabriel Santos em 14/08/2026 — substitui a paleta placeholder anterior (cobre/grafite)
 - Ambiente de demonstração no Render sem Docker (decisão consciente); Docker completo fica para etapa posterior
 - Escopo do Encarregado é individual (`solicitante = request.user`), não por posto
-- Reabertura de Solicitação reaproveita o status `ABERTA` (sem novo status `REABERTA`), rastreada via `reaberta_em`
+- Reabertura de Solicitação **não existe** — foi implementada e depois removida (18/08/2026); Edição de Solicitação (`PATCH`/`PUT`) cobre a necessidade, sem o problema de itens/cabeçalho dessincronizados
+- Encerrar Inventário com item não contado exige Engenheiro/Administrador; Almoxarifado só encerra sozinho com 100% contado
+- Ajuste de Inventário que não coube no saldo atual não derruba o encerramento — fica pendente na `observacao` do item
 - Observação da Solicitação é por item (`ItemSolicitacao.observacao`), não no cabeçalho
 - `data_prevista` da Solicitação não é mais input do usuário — nasce igual a `data_solicitacao`
 - Login por CPF, nunca e-mail ou `nome.sobrenome`
