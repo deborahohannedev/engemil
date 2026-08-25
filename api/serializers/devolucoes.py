@@ -71,7 +71,7 @@ class DevolucaoCreateSerializer(serializers.ModelSerializer):
         # quantidade disponível é sempre recalculada aqui, na hora do
         # submit — nunca confia em um valor vindo do cliente, que pode
         # estar desatualizado.
-        disponivel = item_solicitacao.quantidade_atendida - item_solicitacao.quantidade_devolvida
+        disponivel = item_solicitacao.saldo_devolucao()
         if data['quantidade'] > disponivel:
             raise serializers.ValidationError({
                 'quantidade': f'Quantidade devolvida não pode passar de {disponivel} (disponível pra devolução).'
