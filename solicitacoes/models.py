@@ -107,8 +107,10 @@ class ItemSolicitacao(models.Model):
                 name='ck_item_solicitacao_atendida_lte_solicitada',
             ),
             models.CheckConstraint(
-                check=models.Q(quantidade_devolvida__lte=models.F('quantidade_atendida')),
-                name='ck_item_solicitacao_devolvida_lte_atendida',
+                check=models.Q(
+                    quantidade_devolvida__lte=models.F('quantidade_atendida') - models.F('quantidade_saida_senado')
+                ),
+                name='ck_item_solicitacao_devolvida_lte_atendida_menos_senado',
             ),
             models.CheckConstraint(
                 check=models.Q(quantidade_saida_senado__gte=0),
@@ -133,3 +135,9 @@ class ItemSolicitacao(models.Model):
 
     def saldo_pendente(self):
         return self.quantidade_solicitada - self.quantidade_atendida
+
+    def saldo_devolucao(self):
+        # itens saídos via estoque do Senado nunca foram debitados de
+        # Material.estoque_real (ver quantidade_saida_senado acima) — não
+        # entram na quantidade disponível para devolução.
+        return self.quantidade_atendida - self.quantidade_saida_senado - self.quantidade_devolvida

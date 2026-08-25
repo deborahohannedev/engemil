@@ -15,8 +15,9 @@ Regras já garantidas em DevolucaoCreateSerializer.validate() (espelhadas
 aqui em informar() como defesa em profundidade, já que a view hoje cria
 Devolucao direto pelo serializer, sem passar por este service):
 - só uma devolução em aberto por item por vez (DevolucaoJaAbertaError)
-- quantidade não pode passar do disponível (quantidade_atendida -
-  quantidade_devolvida), sempre recalculado na hora do submit
+- quantidade não pode passar do disponível (ItemSolicitacao.saldo_devolucao()
+  — quantidade_atendida menos a fração saída via Senado e menos o que já foi
+  devolvido), sempre recalculado na hora do submit
 
 aprovar() repete essa mesma checagem de saldo (SaldoDevolucaoInsuficienteError)
 — bug real corrigido: sem isso, uma devolução pendente criada antes de outra
@@ -58,7 +59,7 @@ class DevolucaoJaAbertaError(Exception):
 
 
 class SaldoDevolucaoInsuficienteError(Exception):
-    """Levantada ao tentar devolver mais do que quantidade_atendida - quantidade_devolvida."""
+    """Levantada ao tentar devolver mais do que ItemSolicitacao.saldo_devolucao()."""
     pass
 
 
@@ -81,7 +82,7 @@ class DevolucaoService:
                 f'Aguarde ela ser aprovada ou rejeitada antes de abrir outra.'
             )
 
-        disponivel = item_solicitacao.quantidade_atendida - item_solicitacao.quantidade_devolvida
+        disponivel = item_solicitacao.saldo_devolucao()
         if quantidade > disponivel:
             raise SaldoDevolucaoInsuficienteError(
                 f'Quantidade devolvida ({quantidade}) não pode passar do disponível ({disponivel}).'
@@ -117,7 +118,7 @@ class DevolucaoService:
             )
 
         item = devolucao.item_solicitacao
-        disponivel = item.quantidade_atendida - item.quantidade_devolvida
+        disponivel = item.saldo_devolucao()
         if devolucao.quantidade > disponivel:
             raise SaldoDevolucaoInsuficienteError(
                 f'Devolução {devolucao.id}: quantidade ({devolucao.quantidade}) não cabe mais no '
