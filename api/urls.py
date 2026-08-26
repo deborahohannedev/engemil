@@ -7,6 +7,7 @@ from api.views.core import (
     PerfilViewSet, PostoViewSet, ReferenciaTecnicaViewSet, UnidadeMedidaViewSet,
     UsuarioViewSet,
 )
+from api.views.alertas import AlertasResumoView
 from api.views.dashboard import DashboardResumoView
 from api.views.devolucoes import DevolucaoViewSet
 from api.views.entradas import EntradaViewSet
@@ -35,6 +36,7 @@ router.register('itens-inventario', ItemInventarioViewSet, basename='iteminventa
 urlpatterns = [
     path('', include(router.urls)),
     path('dashboard/resumo/', DashboardResumoView.as_view(), name='dashboard-resumo'),
+    path('alertas/resumo/', AlertasResumoView.as_view(), name='alertas-resumo'),
     path('auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
 ]
