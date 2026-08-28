@@ -147,6 +147,12 @@ class Command(BaseCommand):
                 valor_unitario=material.valor_unitario or Decimal('10.00'),
             )
         self._entrada_service.confirmar(entrada, usuario=self.almoxarifado)
+        # confirmar() atualiza Material.estoque_real no banco, mas as
+        # instâncias em self.materiais ficam com o valor antigo em cache
+        # (foram carregadas antes da entrada) — sem isso, separar() calcula
+        # disponibilidade com estoque desatualizado.
+        for material in self.materiais:
+            material.refresh_from_db()
 
     def _criar_entrada_pendente(self) -> None:
         if Entrada.objects.filter(nota_fiscal='DEMO-NF-002').exists():
