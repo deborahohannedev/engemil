@@ -197,7 +197,11 @@ class Command(BaseCommand):
             for material in self.materiais[:3]
         ]
 
-        self._solicitacao_service.confirmar_saida(solicitacao, usuario=self.almoxarifado)
+        for item in itens:
+            self._solicitacao_service.separar(item, item.quantidade_solicitada)
+        self._solicitacao_service.confirmar_saida(
+            solicitacao, usuario=self.almoxarifado, responsavel_retirada='Retirada Demonstração',
+        )
         for item in itens:
             item.refresh_from_db()
 
@@ -258,7 +262,7 @@ class Command(BaseCommand):
             solicitante=self.encarregado2,
             observacao='Solicitação de demonstração — parcialmente atendida (um item sem estoque).',
         )
-        ItemSolicitacao.objects.create(
+        item_disponivel = ItemSolicitacao.objects.create(
             solicitacao=solicitacao,
             material=material_disponivel,
             quantidade_solicitada=Decimal('2'),
@@ -268,10 +272,15 @@ class Command(BaseCommand):
             solicitacao=solicitacao,
             material=material_indisponivel,
             quantidade_solicitada=Decimal('2'),
-            observacao='Item propositalmente sem estoque — fica INDISPONIVEL.',
+            observacao='Item propositalmente sem estoque — não entra na separação, fica PENDENTE.',
         )
 
-        self._solicitacao_service.confirmar_saida(solicitacao, usuario=self.almoxarifado)
+        # só separa o item com estoque — o sem estoque não pode ser
+        # separado (separar() exige disponibilidade), então fica PENDENTE.
+        self._solicitacao_service.separar(item_disponivel, item_disponivel.quantidade_solicitada)
+        self._solicitacao_service.confirmar_saida(
+            solicitacao, usuario=self.almoxarifado, responsavel_retirada='Retirada Demonstração',
+        )
 
     def _criar_solicitacao_aberta(self) -> None:
         numero = 'DEMO-SOL-003'
